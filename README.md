@@ -11,6 +11,7 @@
 - 使用 `numpy`、`wave`、`math`、`random` 等纯 Python 方式合成 WAV
 - 不接入外部音乐生成 API
 - 支持模型把简陋输入先扩写成专业音乐 brief
+- 内置“音乐技法知识层”，会为 brief 和代码生成选择合适的电子乐/8bit/ambient/lofi 合成与编曲手法
 - AI 直接生成 Python 合成代码，输出 WAV；固定渲染器作为失败兜底
 - 仅支持 QQ 个人号适配器和 QQ 官方机器人适配器
 - 支持 `voice`、`file`、`auto` 三种发送模式
@@ -44,17 +45,45 @@
 用户输入
 -> PromptBrief / enriched_prompt
 -> MusicSpec
+-> 选择音乐技法卡片
 -> AI 生成 Python 合成函数
 -> 受限子进程执行并渲染 WAV
 -> 失败时回退到固定 Python 渲染器
 -> QQ 发送
 ```
 
-如果用户输入很简略，例如“来点适合晚上写代码的音乐”，插件会先让模型扩写成更专业的音乐描述，补全风格、场景、速度感、乐器、节奏、和声、旋律、纹理、效果和混音方向，再让模型基于这个 brief 编写 Python 合成函数。
+如果用户输入很简略，例如“来点适合晚上写代码的音乐”，插件会先让模型扩写成更专业的音乐描述，补全风格、场景、速度感、乐器、节奏、和声、旋律、纹理、效果、混音和段落方向，再让模型基于这个 brief 编写 Python 合成函数。
+
+## 音乐技法知识层
+
+插件内置的是“技法卡片”，不是固定曲谱模板，也不是固定代码模板。它们只告诉模型某类音乐常见的合成和编曲语法，具体旋律、节奏、和弦、音色公式和段落安排仍由模型每次根据提示词原创。
+
+当前技法卡片包括：
+
+- `arrangement_motifs`：多动机、A/B 段、问答句、每 4/8 小节变化
+- `ambient_pad`：长 pad、drone、空间感、慢速滤波/音量运动
+- `8bit_chiptune`：方波/三角波、pulse bass、noise 鼓、游戏感琶音
+- `lofi_hiphop`：温暖键盘、swing 鼓、低通、vinyl/tape 噪声
+- `fm_bell`：FM 铃声、冰晶感、稀疏高频点缀和回声
+- `acid_bass`：saw/square bass、accent、滑音/八度跳跃、滤波运动
+- `noise_texture`：风声、雨声、磁带底噪、柔和噪声打击乐
+- `karplus_pluck`：拨弦/竖琴/吉他质感的短促衰减音色
+- `wavetable_lead`：混合基础波形并随时间改变亮度的 lead
+
+例如用户只写“寒冬”，模型增强 prompt 时可能会选择 `ambient_pad`、`fm_bell`、`noise_texture`；用户写“像素冒险”，则更可能选择 `8bit_chiptune`、`arrangement_motifs`、`wavetable_lead`。
 
 ## AI Python 渲染
 
 主路径会让模型生成一个 `render(duration, sample_rate, loopable)` 函数。函数必须返回一维 `numpy` float 音频数组，插件负责归一化并写出 WAV。
+
+代码生成提示会要求模型像编曲一样组织音乐，而不是只循环一个短旋律：
+
+- 尽量拆出 drums / rhythmic texture、bass、chords 或 pad、melody 或 lead 等层
+- 至少使用两个动机或动机变形
+- 使用 A/B、问答句或乐句变奏
+- 每 4/8 小节改变音区、节奏、密度、和声、音色、过门或效果运动
+- 使用 envelope，并结合 LFO/调制、滤波式音色塑形、FM/additive/wavetable/subtractive、noise percussion、delay/reverb 中的若干手法
+- `loopable=True` 时避免一次性 intro/outro，并让乐句周期适合首尾衔接
 
 执行限制：
 

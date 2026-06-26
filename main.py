@@ -34,6 +34,90 @@ DEFAULT_MODEL_CALL_TIMEOUT_SECONDS = 12
 VOICE_SEND_TIMEOUT_SECONDS = 8
 FILE_SEND_TIMEOUT_SECONDS = 20
 
+TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
+    {
+        "id": "arrangement_motifs",
+        "keywords": ["melody", "motif", "theme", "variation", "旋律", "动机", "主题", "变奏"],
+        "summary": "general arrangement grammar",
+        "guide": (
+            "Create 2-3 original motifs, an A/B or call-response shape, phrase-level variation every 4 or 8 bars, "
+            "and avoid looping one short note list unchanged for the whole piece."
+        ),
+    },
+    {
+        "id": "ambient_pad",
+        "keywords": ["ambient", "pad", "drone", "space", "cold", "winter", "星空", "宇宙", "寒冬", "冰", "空灵", "氛围"],
+        "summary": "slow ambient pad, drone, and space",
+        "guide": (
+            "Use long pads or drones, sparse bell/pluck notes, slow filter or amplitude motion, airy noise texture, "
+            "wide reverb/delay, and gradual harmonic color changes."
+        ),
+    },
+    {
+        "id": "8bit_chiptune",
+        "keywords": ["8bit", "chiptune", "chip", "pixel", "game", "arcade", "像素", "游戏", "复古"],
+        "summary": "chip lead, pulse bass, and noise drums",
+        "guide": (
+            "Use square/pulse/triangle oscillators, short envelopes, arpeggio or counter-melody writing, "
+            "noise kick/snare/hat, and playful register changes."
+        ),
+    },
+    {
+        "id": "lofi_hiphop",
+        "keywords": ["lofi", "chill", "rain", "cafe", "study", "雨", "咖啡", "学习", "放松", "夜晚"],
+        "summary": "warm lofi keys and swung drums",
+        "guide": (
+            "Use warm keys or soft plucks, 7th/9th-flavored harmony, lazy swung drums, mellow bass, vinyl/tape noise, "
+            "lowpass color, and small timing/level imperfections."
+        ),
+    },
+    {
+        "id": "fm_bell",
+        "keywords": ["bell", "crystal", "ice", "magic", "star", "铃", "铃声", "冰晶", "魔法", "星"],
+        "summary": "FM bell or glassy pluck accents",
+        "guide": (
+            "Use simple FM-like sidebands or additive partials for glassy bell notes, quick attack, long release, "
+            "echo, and sparse melodic accents above the main harmony."
+        ),
+    },
+    {
+        "id": "acid_bass",
+        "keywords": ["acid", "cyber", "techno", "rave", "dark", "赛博", "地下", "紧张", "黑暗"],
+        "summary": "acid/electro bass movement",
+        "guide": (
+            "Use a saw or square bassline with accents, slides or octave jumps, resonant-filter-like brightness motion, "
+            "four-on-floor or broken electronic drums, and evolving automation."
+        ),
+    },
+    {
+        "id": "noise_texture",
+        "keywords": ["noise", "wind", "rain", "tape", "vinyl", "风", "雨", "噪声", "磁带"],
+        "summary": "controlled noise and texture layer",
+        "guide": (
+            "Use filtered noise for wind, rain, vinyl, tape hiss, risers, or soft percussion, with envelopes and volume "
+            "automation so texture supports the music instead of masking it."
+        ),
+    },
+    {
+        "id": "karplus_pluck",
+        "keywords": ["pluck", "guitar", "harp", "string", "拨弦", "吉他", "竖琴", "弦"],
+        "summary": "pluck or string-like synthesis",
+        "guide": (
+            "Use short noise bursts, decaying resonant or comb-like tones, or bright pluck envelopes for guitar/harp-like "
+            "parts, then vary pitch and decay across phrases."
+        ),
+    },
+    {
+        "id": "wavetable_lead",
+        "keywords": ["lead", "synth", "electronic", "bright", "future", "电子", "合成器", "明亮"],
+        "summary": "wavetable-like lead and evolving timbre",
+        "guide": (
+            "Blend sine/saw/square/triangle shapes, crossfade or modulate brightness over time, and write lead phrases "
+            "that answer the bass or chord rhythm."
+        ),
+    },
+)
+
 
 @dataclass
 class PromptBrief:
@@ -128,6 +212,109 @@ def _normalize_send_mode(value: Any, default: str = "auto") -> str:
 
 def _normalize_diversity_level(value: Any, default: int = DEFAULT_DIVERSITY_LEVEL) -> int:
     return _safe_int(value, default, 0, 2)
+
+
+def _technique_catalog() -> str:
+    return "\n".join(
+        f"- {guide['id']}: {guide['summary']}. {guide['guide']}"
+        for guide in TECHNIQUE_GUIDES
+    )
+
+
+def _format_technique_guides(guides: list[dict[str, Any]]) -> str:
+    return "\n".join(
+        f"- {guide['id']}: {guide['guide']}"
+        for guide in guides
+    )
+
+
+def _select_technique_guides(brief: PromptBrief, spec: MusicSpec | None = None, diversity_level: int = DEFAULT_DIVERSITY_LEVEL) -> list[dict[str, Any]]:
+    diversity_level = _normalize_diversity_level(diversity_level)
+    text_parts = [
+        brief.original_prompt,
+        brief.enriched_prompt,
+        brief.style,
+        brief.scene,
+        brief.musical_intent,
+        " ".join(brief.references),
+    ]
+    if spec is not None:
+        text_parts.extend([
+            spec.mood,
+            spec.key,
+            " ".join(spec.instruments),
+            " ".join(spec.effects),
+        ])
+    text = " ".join(str(part) for part in text_parts if part).lower()
+    ref_text = " ".join(str(item) for item in brief.references).lower()
+    scored: list[tuple[int, int, dict[str, Any]]] = []
+    for index, guide in enumerate(TECHNIQUE_GUIDES):
+        guide_id = str(guide["id"])
+        score = 0
+        if guide_id == "arrangement_motifs":
+            score += 8
+        if guide_id in text or guide_id.replace("_", " ") in text:
+            score += 10
+        if guide_id in ref_text or guide_id.replace("_", " ") in ref_text:
+            score += 10
+        for keyword in guide.get("keywords", []):
+            keyword_text = str(keyword).lower()
+            if keyword_text and keyword_text in text:
+                score += 2
+
+        if spec is not None:
+            style_text = f"{spec.mood} {' '.join(spec.instruments)} {' '.join(spec.effects)}".lower()
+            if guide_id == "ambient_pad" and ("ambient" in style_text or "pad" in style_text or "drone" in style_text):
+                score += 4
+            elif guide_id == "8bit_chiptune" and ("8bit" in style_text or "chip" in style_text):
+                score += 4
+            elif guide_id == "lofi_hiphop" and "lofi" in style_text:
+                score += 4
+            elif guide_id == "fm_bell" and ("bell" in style_text or spec.brightness > 0.72):
+                score += 3
+            elif guide_id == "acid_bass" and ("acid" in style_text or spec.energy > 0.7):
+                score += 3
+            elif guide_id == "noise_texture" and ("noise" in style_text or "reverb" in style_text):
+                score += 3
+            elif guide_id == "karplus_pluck" and "pluck" in style_text:
+                score += 3
+            elif guide_id == "wavetable_lead" and ("lead" in style_text or "synth" in style_text or "electronic" in style_text):
+                score += 3
+
+        if diversity_level >= 2 and guide_id in {"acid_bass", "karplus_pluck", "wavetable_lead"}:
+            score += 1
+        scored.append((score, index, guide))
+
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    limit = 5 if diversity_level >= 2 else 4
+    selected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for score, _, guide in scored:
+        guide_id = str(guide["id"])
+        if score <= 0:
+            continue
+        if guide_id in seen:
+            continue
+        selected.append(guide)
+        seen.add(guide_id)
+        if len(selected) >= limit:
+            break
+
+    if "arrangement_motifs" not in seen:
+        selected.insert(0, TECHNIQUE_GUIDES[0])
+        seen.add("arrangement_motifs")
+    default_ids = ("wavetable_lead", "noise_texture", "lofi_hiphop")
+    for default_id in default_ids:
+        if len(selected) >= 3:
+            break
+        if default_id in seen:
+            continue
+        for guide in TECHNIQUE_GUIDES:
+            if guide["id"] == default_id:
+                selected.append(guide)
+                seen.add(default_id)
+                break
+    return selected[:limit]
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:
@@ -270,17 +457,17 @@ def _fallback_spec(prompt: str, default_duration: int, max_duration: int, defaul
     instruments = ["8bit_lead", "synth_bass", "soft_pad", "lofi_drums"]
     effects = ["soft_clip", "small_delay"]
 
-    if any(word in lower or word in prompt for word in ["ambient", "氛围", "星空", "宇宙", "空灵"]):
+    if any(word in lower or word in prompt for word in ["ambient", "winter", "ice", "cold", "lonely", "wind", "氛围", "星空", "宇宙", "空灵", "寒冬", "冰", "冷", "冬", "孤独", "风"]):
         mood, energy, brightness, density, bpm = "ambient", 0.32, 0.72, 0.35, 76
         instruments = ["soft_pad", "sine_bell", "sub_bass", "noise_texture"]
         effects = ["wide_reverb", "gentle_delay"]
         key = "D minor"
-    elif any(word in lower or word in prompt for word in ["lofi", "雨", "咖啡", "chill", "放松"]):
+    elif any(word in lower or word in prompt for word in ["lofi", "rain", "cafe", "study", "chill", "雨", "咖啡", "学习", "放松"]):
         mood, energy, brightness, density, bpm = "lofi", 0.42, 0.42, 0.52, 84
         instruments = ["warm_keys", "synth_bass", "lofi_drums", "vinyl_noise"]
         effects = ["soft_clip", "small_delay", "lowpass"]
         key = "A minor"
-    elif any(word in lower or word in prompt for word in ["8bit", "chiptune", "像素", "游戏", "电子"]):
+    elif any(word in lower or word in prompt for word in ["8bit", "chiptune", "pixel", "arcade", "game", "像素", "游戏", "电子"]):
         mood, energy, brightness, density, bpm = "8bit", 0.72, 0.86, 0.66, 132
         instruments = ["8bit_lead", "pulse_bass", "arp", "chip_drums"]
         effects = ["soft_clip"]
@@ -316,6 +503,19 @@ def _fallback_brief(prompt: str) -> PromptBrief:
     style = fallback.mood
     instruments = ", ".join(fallback.instruments[:4])
     effects = ", ".join(fallback.effects[:3])
+    style_text = f"{style} {' '.join(fallback.instruments)} {' '.join(fallback.effects)}".lower()
+    technique_refs = ["arrangement_motifs"]
+    lower_prompt = prompt.lower()
+    if style == "ambient" or any(word in lower_prompt or word in prompt for word in ["ambient", "winter", "ice", "cold", "lonely", "wind", "氛围", "星空", "宇宙", "空灵", "寒冬", "冰", "冷", "冬", "孤独", "风"]):
+        technique_refs.extend(["ambient_pad", "fm_bell", "noise_texture"])
+    elif "lofi" in style_text:
+        technique_refs.extend(["lofi_hiphop", "noise_texture"])
+    elif "8bit" in style_text or "chip" in style_text:
+        technique_refs.extend(["8bit_chiptune", "wavetable_lead"])
+    elif "acid" in style_text or "dark" in style_text or "electronic" in style_text:
+        technique_refs.extend(["acid_bass", "wavetable_lead", "noise_texture"])
+    else:
+        technique_refs.extend(["wavetable_lead", "lofi_hiphop"])
     enriched = (
         f"A polished {style} instrumental loop for the scene '{prompt}'. "
         f"Use {instruments}, {fallback.bpm} BPM, {fallback.key}, "
@@ -329,7 +529,7 @@ def _fallback_brief(prompt: str) -> PromptBrief:
         style=style,
         scene=prompt,
         musical_intent="make a pleasant pure-Python generated instrumental clip",
-        references=fallback.instruments[:4],
+        references=(technique_refs + fallback.instruments[:4])[:8],
         avoid=["vocals", "external samples", "overly harsh noise"],
     )
 
@@ -1346,7 +1546,7 @@ class PythonMusicRenderer:
     "astrbot_plugin_pymusic",
     "Lenovo",
     "Generate pure Python WAV music from prompts and send it to QQ chats.",
-    "0.2.0",
+    "0.2.1",
     repo="https://github.com/blueraina/astrbot_plugin_pymusic",
 )
 class PyMusicPlugin(Star):
@@ -1466,18 +1666,23 @@ class PyMusicPlugin(Star):
             return fallback
         system_prompt = (
             "You are a music prompt producer for a deterministic pure-Python synthesizer. "
-            "Rewrite short or vague user input into one professional, concrete music brief. "
+            "Rewrite short or vague user input into one professional, concrete music brief that a code-writing synthesizer can implement. "
             "Do not include markdown. Do not write Python. Return one strict JSON object. "
             "Fields: enriched_prompt string, style string, scene string, musical_intent string, "
             "references array of short strings, avoid array of short strings. "
-            "The enriched_prompt should describe mood, genre, tempo feel, instruments, rhythm, harmony, melody, texture, effects, and mix. "
-            "Use only electronic, 8bit, ambient, lofi, or nearby pure-synth styles. Avoid vocals and copyrighted artist imitation."
+            "The enriched_prompt should describe mood, genre, tempo feel, instruments, rhythm, harmony, melody, texture, effects, mix, and arrangement arc. "
+            "Infer concrete musical intent for sparse prompts instead of repeating the user's words. "
+            "Use references for 2-4 recommended technique ids from the provided catalog, plus optional short texture references. "
+            "These technique ids are composition grammar, not fixed songs or fixed code. "
+            "Use only electronic, 8bit, ambient, lofi, or nearby pure-synth styles. Avoid vocals, lyrics, external samples, and copyrighted artist imitation."
         )
         user_prompt = (
             f"Original user prompt: {prompt}\n"
             f"Defaults: duration={duration}, loopable={loopable}, send_mode={send_mode}. "
             f"Max duration={self._max_duration()}. Diversity level={self._diversity_level()} where 0=stable, 1=balanced, 2=bold.\n"
-            "Make sparse input sound intentional and musical."
+            "Available technique catalog:\n"
+            f"{_technique_catalog()}\n"
+            "Make sparse input sound intentional and musical. Prefer technique ids that match the prompt; do not invent artist names."
         )
         try:
             response = await self._provider_text_chat(provider, user_prompt, system_prompt)
@@ -1499,13 +1704,17 @@ class PyMusicPlugin(Star):
             "Allowed styles are electronic, 8bit, ambient, and lofi. "
             "Fields: mood string, energy number 0..1, brightness number 0..1, density number 0..1, "
             "bpm integer 55..180, key string, instruments array of strings, effects array of strings, "
-            "duration integer seconds, loopable boolean, send_mode string voice/file/auto."
+            "duration integer seconds, loopable boolean, send_mode string voice/file/auto. "
+            "Use the technique ids as stylistic hints for instruments/effects, but do not output fixed code or a fixed melody."
         )
         user_prompt = (
             f"Original prompt: {brief.original_prompt}\n"
             f"Enriched prompt: {brief.enriched_prompt}\n"
             f"Style: {brief.style}\n"
             f"Scene: {brief.scene}\n"
+            f"Musical intent: {brief.musical_intent}\n"
+            f"Technique references: {brief.references}\n"
+            f"Avoid: {brief.avoid}\n"
             f"Defaults: duration={duration}, loopable={loopable}, send_mode={send_mode}. "
             f"Max duration={self._max_duration()}."
         )
@@ -1522,15 +1731,23 @@ class PyMusicPlugin(Star):
         provider = self._get_music_provider(event)
         if provider is None:
             return None
+        technique_guides = _select_technique_guides(brief, spec, self._diversity_level())
         system_prompt = (
             "You write pure Python DSP code for a sandboxed music renderer. "
             "Return Python code only, no markdown, no explanation. "
-            "The code must define exactly one callable: render(duration, sample_rate, loopable). "
+            "The code must define render(duration, sample_rate, loopable); small helper functions are allowed. "
             "render must return a one-dimensional numpy array of float audio samples in -1..1. "
-            "Allowed imports: numpy as np, math, random. Do not read or write files. Do not use os, sys, subprocess, pathlib, sockets, network, eval, exec, open, or __import__. "
-            "Use numpy synthesis: oscillators, envelopes, drums, bass, chords, melody, pads, noise, delay/reverb if useful. "
-            "The music should be complete and musical, with a distinctive melody derived from the brief, not a fixed stock phrase. "
-            "For loopable=True, make phrase lengths periodic and avoid one-shot intros/outros."
+            "Allowed imports: numpy as np, math, random. Do not read or write files. "
+            "Do not use os, sys, subprocess, pathlib, sockets, network, eval, exec, open, or __import__. "
+            "Do not use external samples or any music-generation API. "
+            "Use the selected technique guides as style grammar, not as fixed templates. Invent original notes, rhythms, timbres, and section choices for this exact brief. "
+            "Hard musical requirements: build from beat/bar timing derived from bpm; create drums or rhythmic texture, bass, chords/pad, and melody/lead/texture layers when stylistically appropriate; "
+            "use at least two motifs or motif transformations; include A/B, call-response, or phrase variation; vary register, rhythm, density, harmony, timbre, fill, or effect motion every 4 or 8 bars; "
+            "avoid repeating one short melody array unchanged for the whole duration; use envelopes and at least two of LFO/modulation, filter-like tone shaping, FM/additive/wavetable/subtractive synthesis, noise percussion, delay, or reverb. "
+            "For ambient, drums may be replaced by subtle pulse/noise motion, but the piece still needs evolving layers and melodic identity. "
+            "For loopable=True, make phrase lengths periodic, avoid one-shot intros/outros, and keep delay/reverb tails compatible with looping. "
+            "Selected technique guides:\n"
+            f"{_format_technique_guides(technique_guides)}"
         )
         user_prompt = json.dumps(
             {
@@ -1539,6 +1756,11 @@ class PyMusicPlugin(Star):
                 "style": brief.style,
                 "scene": brief.scene,
                 "musical_intent": brief.musical_intent,
+                "technique_references": brief.references,
+                "selected_technique_guides": [
+                    {"id": guide["id"], "summary": guide["summary"], "guide": guide["guide"]}
+                    for guide in technique_guides
+                ],
                 "music_spec": spec.__dict__,
                 "requirements": {
                     "duration": spec.duration,
@@ -1546,6 +1768,12 @@ class PyMusicPlugin(Star):
                     "loopable": spec.loopable,
                     "mono_float_array": True,
                     "pure_python_numpy": True,
+                    "composition": [
+                        "original motifs, not a stock phrase",
+                        "section or phrase variation",
+                        "separate musical layers",
+                        "ADSR/envelopes plus modulation or effects",
+                    ],
                 },
             },
             ensure_ascii=False,
@@ -1671,12 +1899,19 @@ with wave.open(str(out_path), "wb") as wf:
             "melody.shape: arpeggio, call_response, pentatonic, stepwise, random_walk, motif_variation; melody.register: low/mid/high. "
             "texture.noise: vinyl/tape/air/space/none. effects: delay/reverb/lowpass booleans. master.target_peak 0.3..0.98. "
             "For diversity_level 0 choose stable conventional patterns; for 1 use balanced variation; for 2 choose bolder patterns, fills, and melody shapes. "
+            "Use technique references as stylistic hints while staying within renderer-friendly choices. "
             "Keep values simple and renderer-friendly."
         )
         try:
+            technique_guides = _select_technique_guides(brief, spec, diversity_level)
             plan_input = {
                 "original_prompt": brief.original_prompt,
                 "enriched_prompt": brief.enriched_prompt,
+                "technique_references": brief.references,
+                "selected_technique_guides": [
+                    {"id": guide["id"], "summary": guide["summary"]}
+                    for guide in technique_guides
+                ],
                 "music_spec": spec.__dict__,
                 "diversity_level": diversity_level,
             }
