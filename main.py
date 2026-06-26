@@ -26,6 +26,7 @@ VOICE_MAX_SECONDS = 60
 HARD_MAX_SECONDS = 600
 DEFAULT_DURATION = 20
 DEFAULT_SAMPLE_RATE = 44100
+DEFAULT_DIVERSITY_LEVEL = 1
 
 
 @dataclass
@@ -117,6 +118,10 @@ def _safe_int(value: Any, default: int, low: int, high: int) -> int:
 def _normalize_send_mode(value: Any, default: str = "auto") -> str:
     mode = str(value or default).strip().lower()
     return mode if mode in SEND_MODES else default
+
+
+def _normalize_diversity_level(value: Any, default: int = DEFAULT_DIVERSITY_LEVEL) -> int:
+    return _safe_int(value, default, 0, 2)
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:
@@ -278,7 +283,8 @@ def _spec_from_dict(data: dict[str, Any], fallback: MusicSpec, max_duration: int
     )
 
 
-def _default_plan(spec: MusicSpec) -> RenderPlan:
+def _default_plan(spec: MusicSpec, diversity_level: int = DEFAULT_DIVERSITY_LEVEL) -> RenderPlan:
+    diversity_level = _normalize_diversity_level(diversity_level)
     style_text = f"{spec.mood} {' '.join(spec.instruments)}".lower()
     if "ambient" in style_text or "氛围" in style_text:
         tracks = [
@@ -324,10 +330,10 @@ def _default_plan(spec: MusicSpec) -> RenderPlan:
             {"role": "chords", "name": "pluck", "gain": 0.75},
             {"role": "drums", "name": "electronic_drums", "gain": 1.0},
         ]
-        drum_pattern = "minimal_techno"
-        bass_pattern = "acid_bass"
+        drum_pattern = "breakbeat" if diversity_level >= 2 and spec.density > 0.55 else "minimal_techno"
+        bass_pattern = "acid_bass" if diversity_level >= 1 else "root_octave"
         progression = "i-iv-V-i"
-        melody_shape = "call_response"
+        melody_shape = "random_walk" if diversity_level >= 2 else "call_response"
         texture_noise = "air"
     else:
         tracks = [
@@ -336,17 +342,17 @@ def _default_plan(spec: MusicSpec) -> RenderPlan:
             {"role": "bass", "name": "warm_bass", "gain": 0.9},
             {"role": "drums", "name": "electronic_drums", "gain": 0.9},
         ]
-        drum_pattern = "breakbeat" if spec.density > 0.62 else "minimal_techno"
-        bass_pattern = "syncopated_pulse"
+        drum_pattern = "breakbeat" if diversity_level >= 2 or spec.density > 0.62 else "minimal_techno"
+        bass_pattern = "syncopated_pulse" if diversity_level >= 1 else "warm_roots"
         progression = "I-V-vi-IV" if spec.brightness > 0.62 else "i-VI-III-VII"
-        melody_shape = "motif_variation"
+        melody_shape = "random_walk" if diversity_level >= 2 else "motif_variation"
         texture_noise = "air"
 
     return RenderPlan(
         tracks=tracks,
         drums={"pattern": drum_pattern, "density": spec.density},
         bass={"pattern": bass_pattern},
-        chords={"progression": progression, "voicing": "soft" if spec.brightness < 0.55 else "open"},
+        chords={"progression": progression, "voicing": "stabs" if diversity_level >= 2 and spec.energy > 0.62 else ("soft" if spec.brightness < 0.55 else "open")},
         melody={"shape": melody_shape, "activity": spec.density, "register": "high" if spec.brightness > 0.65 else "mid"},
         texture={"noise": texture_noise},
         effects={
@@ -396,8 +402,9 @@ class PythonMusicRenderer:
         "warm_bass": {"shape": "triangle", "attack": 0.012, "release": 0.12, "gain": 0.9, "brightness": -0.08},
     }
 
-    def render(self, spec: MusicSpec, plan: RenderPlan, out_path: Path, sample_rate: int) -> None:
+    def render(self, spec: MusicSpec, plan: RenderPlan, out_path: Path, sample_rate: int, diversity_level: int = DEFAULT_DIVERSITY_LEVEL) -> None:
         sample_rate = _safe_int(sample_rate, DEFAULT_SAMPLE_RATE, 16000, 48000)
+        diversity_level = _normalize_diversity_level(diversity_level)
         duration = max(5, min(HARD_MAX_SECONDS, int(spec.duration)))
         bpm = max(55, min(180, int(spec.bpm)))
         beat = 60.0 / bpm
@@ -411,14 +418,16 @@ class PythonMusicRenderer:
         audio = np.zeros(total_samples, dtype=np.float32)
         root, scale = self._scale(spec.key)
         rng = random.Random(self._seed(spec, plan))
+        arrangement = self._build_arrangement(total_samples / sample_rate, bar, spec, diversity_level)
 
-        audio += self._render_drums(total_samples, sample_rate, beat, spec, plan, rng)
-        audio += self._render_bass(total_samples, sample_rate, beat, root, scale, spec, plan, rng)
-        audio += self._render_chords(total_samples, sample_rate, bar, root, scale, spec, plan, rng)
-        audio += self._render_melody(total_samples, sample_rate, beat, root, scale, spec, plan, rng)
+        audio += self._render_drums(total_samples, sample_rate, beat, spec, plan, rng, arrangement, diversity_level)
+        audio += self._render_bass(total_samples, sample_rate, beat, root, scale, spec, plan, rng, arrangement)
+        audio += self._render_chords(total_samples, sample_rate, bar, root, scale, spec, plan, rng, arrangement)
+        audio += self._render_melody(total_samples, sample_rate, beat, root, scale, spec, plan, rng, arrangement)
         audio += self._render_texture(total_samples, sample_rate, spec, plan, rng)
 
         audio = self._apply_effects(audio, sample_rate, spec, plan)
+        audio = self._apply_arrangement_envelope(audio, sample_rate, bar, arrangement, spec.loopable)
         if spec.loopable:
             audio = self._make_loopable(audio, sample_rate)
         audio = self._master(audio, plan)
@@ -604,6 +613,112 @@ class PythonMusicRenderer:
     def _voice_engine(self, role: str, spec: MusicSpec, plan: RenderPlan) -> dict[str, Any]:
         return self.VOICE_ENGINES[self._voice_engine_name(role, spec, plan)]
 
+    def _build_arrangement(self, duration: float, bar: float, spec: MusicSpec, diversity_level: int) -> list[dict[str, Any]]:
+        bars = max(1, int(math.ceil(duration / bar)))
+        if diversity_level <= 0 or bars < 8:
+            return [self._segment(0, bars, "main_a")]
+
+        if spec.loopable:
+            if bars < 16:
+                split = max(4, bars // 2)
+                return [
+                    self._segment(0, split, "main_a"),
+                    self._segment(split, bars, "main_a"),
+                ]
+            q1 = max(4, bars // 4)
+            q3 = max(q1 + 1, bars - q1)
+            return [
+                self._segment(0, q1, "main_a"),
+                self._segment(q1, q3, "main_b" if diversity_level >= 2 else "main_a"),
+                self._segment(q3, bars, "main_a"),
+            ]
+
+        if bars < 16:
+            intro = max(1, bars // 6)
+            outro = max(1, bars // 6)
+            main_end = max(intro + 1, bars - outro)
+            return [
+                self._segment(0, intro, "intro"),
+                self._segment(intro, main_end, "main_a"),
+                self._segment(main_end, bars, "outro"),
+            ]
+
+        intro = min(4, max(2, bars // 10))
+        outro = min(4, max(2, bars // 10))
+        break_len = min(4, max(2, bars // 12)) if diversity_level >= 1 and bars >= 24 else 0
+        body = max(4, bars - intro - outro - break_len)
+        a_len = max(4, body // 2)
+        b_len = max(4, body - a_len)
+        start_b = intro + a_len
+        start_break = start_b + b_len
+        start_final = start_break + break_len
+        segments = [
+            self._segment(0, intro, "intro"),
+            self._segment(intro, start_b, "main_a"),
+            self._segment(start_b, start_break, "main_b" if diversity_level >= 2 else "main_a"),
+        ]
+        if break_len > 0:
+            segments.append(self._segment(start_break, start_final, "break"))
+        segments.append(self._segment(start_final, bars - outro, "main_b" if diversity_level >= 2 else "main_a"))
+        segments.append(self._segment(bars - outro, bars, "outro"))
+        return [segment for segment in segments if int(segment["end_bar"]) > int(segment["start_bar"])]
+
+    def _segment(self, start_bar: int, end_bar: int, label: str) -> dict[str, Any]:
+        profiles = {
+            "intro": {"drums": 0.35, "bass": 0.5, "chords": 0.85, "melody": 0.15, "density": -0.25, "melody_shift": 0},
+            "main_a": {"drums": 1.0, "bass": 1.0, "chords": 1.0, "melody": 0.9, "density": 0.0, "melody_shift": 0},
+            "main_b": {"drums": 1.08, "bass": 1.04, "chords": 0.95, "melody": 1.05, "density": 0.18, "melody_shift": 1},
+            "break": {"drums": 0.2, "bass": 0.25, "chords": 0.65, "melody": 0.45, "density": -0.38, "melody_shift": 2},
+            "outro": {"drums": 0.28, "bass": 0.45, "chords": 0.8, "melody": 0.18, "density": -0.25, "melody_shift": 0},
+        }
+        segment = {"start_bar": max(0, int(start_bar)), "end_bar": max(0, int(end_bar)), "label": label}
+        segment.update(profiles.get(label, profiles["main_a"]))
+        return segment
+
+    def _segment_for_bar(self, bar_idx: int, arrangement: list[dict[str, Any]]) -> dict[str, Any]:
+        for segment in arrangement:
+            if int(segment["start_bar"]) <= bar_idx < int(segment["end_bar"]):
+                return segment
+        return arrangement[-1] if arrangement else self._segment(0, 1, "main_a")
+
+    def _segment_for_time(self, t: float, bar: float, arrangement: list[dict[str, Any]]) -> dict[str, Any]:
+        return self._segment_for_bar(max(0, int(t // bar)), arrangement)
+
+    def _role_gain(self, segment: dict[str, Any], role: str) -> float:
+        return self._float_value(segment.get(role, 1.0), 1.0, 0.0, 1.5)
+
+    def _density_shift(self, segment: dict[str, Any]) -> float:
+        return self._float_value(segment.get("density", 0.0), 0.0, -0.5, 0.4)
+
+    def _is_fill_bar(self, bar_idx: int, arrangement: list[dict[str, Any]], diversity_level: int) -> bool:
+        if diversity_level <= 0 or bar_idx <= 0:
+            return False
+        segment = self._segment_for_bar(bar_idx, arrangement)
+        label = str(segment.get("label", "main_a"))
+        if label in {"intro", "outro"}:
+            return False
+        end_bar = int(segment.get("end_bar", 0))
+        start_bar = int(segment.get("start_bar", 0))
+        if end_bar - start_bar >= 4 and bar_idx + 1 == end_bar:
+            return True
+        phrase = 8 if diversity_level >= 2 else 12
+        return (bar_idx + 1) % phrase == 0
+
+    def _apply_arrangement_envelope(self, audio: np.ndarray, sample_rate: int, bar: float, arrangement: list[dict[str, Any]], loopable: bool) -> np.ndarray:
+        if not arrangement or len(audio) <= 8:
+            return audio
+        if loopable:
+            return audio
+        first = arrangement[0]
+        last = arrangement[-1]
+        fade_in = min(int(sample_rate * bar * max(1, int(first["end_bar"]) - int(first["start_bar"]))), len(audio) // 4)
+        fade_out = min(int(sample_rate * bar * max(1, int(last["end_bar"]) - int(last["start_bar"]))), len(audio) // 4)
+        if fade_in > 8:
+            audio[:fade_in] *= np.linspace(0.15, 1.0, fade_in, dtype=np.float32)
+        if fade_out > 8:
+            audio[-fade_out:] *= np.linspace(1.0, 0.05, fade_out, dtype=np.float32)
+        return audio
+
     def _freq(self, midi: int) -> float:
         return 440.0 * (2.0 ** ((midi - 69) / 12.0))
 
@@ -656,7 +771,17 @@ class PythonMusicRenderer:
         env = self._env(n, attack_value, min(release_value, dur * 0.9), sample_rate)
         audio[start_i : start_i + n] += tone * env * gain
 
-    def _render_drums(self, total_samples: int, sample_rate: int, beat: float, spec: MusicSpec, plan: RenderPlan, rng: random.Random) -> np.ndarray:
+    def _render_drums(
+        self,
+        total_samples: int,
+        sample_rate: int,
+        beat: float,
+        spec: MusicSpec,
+        plan: RenderPlan,
+        rng: random.Random,
+        arrangement: list[dict[str, Any]],
+        diversity_level: int,
+    ) -> np.ndarray:
         audio = np.zeros(total_samples, dtype=np.float32)
         drums = self._section(plan, "drums")
         pattern = self._choice(drums.get("pattern"), self.DRUM_PATTERNS, self._default_drum_pattern(spec))
@@ -664,12 +789,20 @@ class PythonMusicRenderer:
             return audio
 
         density = self._float_value(drums.get("density", spec.density), spec.density, 0.0, 1.0)
-        drum_gain = self._track_gain(plan, "drums", 1.0)
+        base_drum_gain = self._track_gain(plan, "drums", 1.0)
         step_dur = beat / 4.0
+        bar = beat * 4.0
         steps = int(math.ceil(total_samples / sample_rate / step_dur))
         for step in range(steps):
             pos = step % 16
             t = step * step_dur
+            bar_idx = int(t // bar)
+            segment = self._segment_for_bar(bar_idx, arrangement)
+            effective_density = _clamp(density + self._density_shift(segment), 0.0, 1.0)
+            drum_gain = base_drum_gain * self._role_gain(segment, "drums")
+            if self._is_fill_bar(bar_idx, arrangement, diversity_level) and pos >= 12:
+                self._drum_fill(audio, sample_rate, t, pos, pattern, drum_gain, spec, rng)
+                continue
             if pattern in {"lofi_swing", "breakbeat"} and pos % 4 in {1, 3}:
                 t += step_dur * (0.28 if pattern == "lofi_swing" else 0.14)
 
@@ -677,42 +810,42 @@ class PythonMusicRenderer:
                 if pos in {0, 6, 10}:
                     self._kick(audio, sample_rate, t, drum_gain * (0.44 + 0.18 * spec.energy))
                 if pos in {4, 12} and spec.energy > 0.18:
-                    self._snare(audio, sample_rate, t, drum_gain * (0.22 + 0.24 * density), rng)
-                if pos in {0, 2, 4, 6, 8, 10, 12, 14} or density > 0.72:
+                    self._snare(audio, sample_rate, t, drum_gain * (0.22 + 0.24 * effective_density), rng)
+                if pos in {0, 2, 4, 6, 8, 10, 12, 14} or effective_density > 0.72:
                     self._hat(audio, sample_rate, t, drum_gain * (0.045 + 0.11 * spec.brightness), rng)
-                if density > 0.62 and pos in {3, 11, 15}:
+                if effective_density > 0.62 and pos in {3, 11, 15}:
                     self._hat(audio, sample_rate, t, drum_gain * 0.045, rng)
             elif pattern == "8bit_arpeggio_beat":
                 if pos in {0, 8}:
                     self._kick(audio, sample_rate, t, drum_gain * (0.48 + 0.22 * spec.energy))
                 if pos in {4, 12} and spec.energy > 0.22:
-                    self._snare(audio, sample_rate, t, drum_gain * (0.18 + 0.22 * density), rng)
-                if pos % 2 == 0 or density > 0.65:
+                    self._snare(audio, sample_rate, t, drum_gain * (0.18 + 0.22 * effective_density), rng)
+                if pos % 2 == 0 or effective_density > 0.65:
                     self._hat(audio, sample_rate, t, drum_gain * (0.05 + 0.08 * spec.brightness), rng)
-                if pos in {3, 7, 11, 15} and density > 0.36:
+                if pos in {3, 7, 11, 15} and effective_density > 0.36:
                     self._blip(audio, sample_rate, t, 1200.0 + 90.0 * (pos % 4), drum_gain * 0.04)
             elif pattern == "breakbeat":
                 if pos in {0, 3, 10} or (spec.energy > 0.72 and pos == 14):
                     self._kick(audio, sample_rate, t, drum_gain * (0.5 + 0.24 * spec.energy))
                 if pos in {4, 12}:
-                    self._snare(audio, sample_rate, t, drum_gain * (0.3 + 0.24 * density), rng)
-                if density > 0.56 and pos in {7, 15}:
+                    self._snare(audio, sample_rate, t, drum_gain * (0.3 + 0.24 * effective_density), rng)
+                if effective_density > 0.56 and pos in {7, 15}:
                     self._snare(audio, sample_rate, t, drum_gain * 0.12, rng)
-                if pos % 2 == 0 or (density > 0.7 and pos in {1, 5, 9, 13}):
+                if pos % 2 == 0 or (effective_density > 0.7 and pos in {1, 5, 9, 13}):
                     self._hat(audio, sample_rate, t, drum_gain * (0.06 + 0.12 * spec.brightness), rng)
             elif pattern == "minimal_techno":
                 if pos in {0, 4, 8, 12}:
                     self._kick(audio, sample_rate, t, drum_gain * (0.54 + 0.24 * spec.energy))
                 if pos == 8 and spec.energy > 0.35:
-                    self._snare(audio, sample_rate, t, drum_gain * (0.18 + 0.18 * density), rng)
-                if pos in {2, 6, 10, 14} or density > 0.74:
+                    self._snare(audio, sample_rate, t, drum_gain * (0.18 + 0.18 * effective_density), rng)
+                if pos in {2, 6, 10, 14} or effective_density > 0.74:
                     self._hat(audio, sample_rate, t, drum_gain * (0.055 + 0.12 * spec.brightness), rng)
             else:
                 if pos in {0, 8} or (pattern == "four_on_floor" and pos in {4, 12}):
                     self._kick(audio, sample_rate, t, drum_gain * (0.5 + 0.22 * spec.energy))
                 if pos in {4, 12} and spec.energy > 0.25:
-                    self._snare(audio, sample_rate, t, drum_gain * (0.24 + 0.22 * density), rng)
-                if density > 0.42 or pos % 4 == 0:
+                    self._snare(audio, sample_rate, t, drum_gain * (0.24 + 0.22 * effective_density), rng)
+                if effective_density > 0.42 or pos % 4 == 0:
                     self._hat(audio, sample_rate, t, drum_gain * (0.07 + 0.12 * spec.brightness), rng)
         return audio
 
@@ -759,7 +892,21 @@ class PythonMusicRenderer:
         env = np.exp(-np.arange(n, dtype=np.float32) / sample_rate * 62.0)
         audio[start_i : start_i + n] += tone * env * gain
 
-    def _render_bass(self, total_samples: int, sample_rate: int, beat: float, root: int, scale: list[int], spec: MusicSpec, plan: RenderPlan, rng: random.Random) -> np.ndarray:
+    def _drum_fill(self, audio: np.ndarray, sample_rate: int, start: float, pos: int, pattern: str, gain: float, spec: MusicSpec, rng: random.Random) -> None:
+        accent = 0.75 + 0.35 * spec.energy
+        if pattern == "8bit_arpeggio_beat":
+            self._blip(audio, sample_rate, start, 900.0 + 140.0 * (pos - 12), gain * 0.08 * accent)
+            if pos in {12, 15}:
+                self._hat(audio, sample_rate, start, gain * 0.08, rng)
+            return
+        if pos in {12, 14, 15}:
+            self._snare(audio, sample_rate, start, gain * (0.16 + 0.16 * spec.density) * accent, rng)
+        if pos in {13, 15}:
+            self._hat(audio, sample_rate, start, gain * (0.08 + 0.08 * spec.brightness), rng)
+        if pattern == "minimal_techno" and pos == 12:
+            self._kick(audio, sample_rate, start, gain * 0.42 * accent)
+
+    def _render_bass(self, total_samples: int, sample_rate: int, beat: float, root: int, scale: list[int], spec: MusicSpec, plan: RenderPlan, rng: random.Random, arrangement: list[dict[str, Any]]) -> np.ndarray:
         audio = np.zeros(total_samples, dtype=np.float32)
         bass = self._section(plan, "bass")
         pattern = self._choice(bass.get("pattern"), self.BASS_PATTERNS, self._default_bass_pattern(spec))
@@ -776,13 +923,15 @@ class PythonMusicRenderer:
         if pattern == "sub_drone":
             bars = int(math.ceil(duration_sec / bar))
             for idx in range(bars):
-                degree = progression[idx % len(progression)]
                 start = idx * bar
+                segment = self._segment_for_time(start, bar, arrangement)
+                segment_gain = self._role_gain(segment, "bass")
+                degree = progression[idx % len(progression)]
                 midi = self._scale_degree_midi(root, scale, degree, -24)
-                self._add_note(audio, sample_rate, start, bar * 0.98, midi, gain * 0.95, "sine", brightness, attack, release)
+                self._add_note(audio, sample_rate, start, bar * 0.98, midi, gain * 0.95 * segment_gain, "sine", brightness, attack, release)
                 if spec.density > 0.44:
                     fifth = self._scale_degree_midi(root, scale, degree + 4, -24)
-                    self._add_note(audio, sample_rate, start + bar * 0.5, bar * 0.46, fifth, gain * 0.35, "sine", brightness, attack, release)
+                    self._add_note(audio, sample_rate, start + bar * 0.5, bar * 0.46, fifth, gain * 0.35 * segment_gain, "sine", brightness, attack, release)
             return audio
 
         if pattern == "acid_bass":
@@ -794,10 +943,12 @@ class PythonMusicRenderer:
                 if item is None:
                     continue
                 bar_idx = int((step * step_dur) // bar)
+                segment = self._segment_for_bar(bar_idx, arrangement)
+                segment_gain = self._role_gain(segment, "bass")
                 degree = progression[bar_idx % len(progression)] + int(item)
                 octave = -24 + (12 if step % 8 in {3, 6} else 0)
                 midi = self._scale_degree_midi(root, scale, degree, octave)
-                self._add_note(audio, sample_rate, step * step_dur, step_dur * 0.7, midi, gain * 0.85, shape, brightness, attack, release)
+                self._add_note(audio, sample_rate, step * step_dur, step_dur * 0.7, midi, gain * 0.85 * segment_gain, shape, brightness, attack, release)
             return audio
 
         if pattern == "syncopated_pulse":
@@ -809,9 +960,11 @@ class PythonMusicRenderer:
                 if item is None:
                     continue
                 bar_idx = int((step * step_dur) // bar)
+                segment = self._segment_for_bar(bar_idx, arrangement)
+                segment_gain = self._role_gain(segment, "bass")
                 degree = progression[bar_idx % len(progression)] + int(item)
                 midi = self._scale_degree_midi(root, scale, degree, -24)
-                self._add_note(audio, sample_rate, step * step_dur, step_dur * 0.72, midi, gain, shape, brightness, attack, release)
+                self._add_note(audio, sample_rate, step * step_dur, step_dur * 0.72, midi, gain * segment_gain, shape, brightness, attack, release)
             return audio
 
         if pattern == "warm_roots":
@@ -819,11 +972,13 @@ class PythonMusicRenderer:
             steps = int(math.ceil(duration_sec / step_dur))
             for step in range(steps):
                 bar_idx = int((step * step_dur) // bar)
+                segment = self._segment_for_bar(bar_idx, arrangement)
+                segment_gain = self._role_gain(segment, "bass")
                 degree = progression[bar_idx % len(progression)]
                 if step % 2 == 1 and spec.density > 0.5:
                     degree += 4
                 midi = self._scale_degree_midi(root, scale, degree, -24)
-                self._add_note(audio, sample_rate, step * step_dur, step_dur * 0.9, midi, gain * 0.9, shape, brightness, attack, release)
+                self._add_note(audio, sample_rate, step * step_dur, step_dur * 0.9, midi, gain * 0.9 * segment_gain, shape, brightness, attack, release)
             return audio
 
         phrase = [0, 0, 7, 0, 5, 0, 4, 7]
@@ -831,13 +986,15 @@ class PythonMusicRenderer:
         steps = int(math.ceil(duration_sec / step_dur))
         for step in range(steps):
             bar_idx = int((step * step_dur) // bar)
+            segment = self._segment_for_bar(bar_idx, arrangement)
+            segment_gain = self._role_gain(segment, "bass")
             base_degree = progression[bar_idx % len(progression)]
             degree = base_degree + phrase[step % len(phrase)]
             midi = self._scale_degree_midi(root, scale, degree, -24)
-            self._add_note(audio, sample_rate, step * step_dur, step_dur * 0.82, midi, gain, shape, brightness, attack, release)
+            self._add_note(audio, sample_rate, step * step_dur, step_dur * 0.82, midi, gain * segment_gain, shape, brightness, attack, release)
         return audio
 
-    def _render_chords(self, total_samples: int, sample_rate: int, bar: float, root: int, scale: list[int], spec: MusicSpec, plan: RenderPlan, rng: random.Random) -> np.ndarray:
+    def _render_chords(self, total_samples: int, sample_rate: int, bar: float, root: int, scale: list[int], spec: MusicSpec, plan: RenderPlan, rng: random.Random, arrangement: list[dict[str, Any]]) -> np.ndarray:
         audio = np.zeros(total_samples, dtype=np.float32)
         chords = self._section(plan, "chords")
         voicing = self._choice(chords.get("voicing"), {"soft", "open", "stabs", "drone"}, "soft" if spec.brightness < 0.55 else "open")
@@ -855,6 +1012,8 @@ class PythonMusicRenderer:
         for idx in range(bars):
             degree = progression[idx % len(progression)]
             start = idx * bar
+            segment = self._segment_for_bar(idx, arrangement)
+            segment_gain = self._role_gain(segment, "chords")
             if progression_name == "modal_drone" or voicing == "drone":
                 notes = [
                     self._scale_degree_midi(root, scale, degree, -12),
@@ -884,10 +1043,10 @@ class PythonMusicRenderer:
             if voicing == "stabs":
                 for stab in (0.0, beat * 1.5, beat * 2.5):
                     for offset, midi in zip(offsets, notes):
-                        self._add_note(audio, sample_rate, start + stab + offset, dur, midi, gain * 0.9, shape, brightness, attack, release)
+                        self._add_note(audio, sample_rate, start + stab + offset, dur, midi, gain * 0.9 * segment_gain, shape, brightness, attack, release)
             else:
                 for offset, midi in zip(offsets, notes):
-                    self._add_note(audio, sample_rate, start + offset, dur, midi, gain, shape, brightness, attack, release)
+                    self._add_note(audio, sample_rate, start + offset, dur, midi, gain * segment_gain, shape, brightness, attack, release)
         return audio
 
     def _melody_phrase(self, shape_name: str, rng: random.Random) -> list[int | None]:
@@ -911,7 +1070,7 @@ class PythonMusicRenderer:
             return phrase
         return [0, 2, 4, 2, None, 5, 4, 2, 1, None, 2, 4, 6, 5, 4, None]
 
-    def _render_melody(self, total_samples: int, sample_rate: int, beat: float, root: int, scale: list[int], spec: MusicSpec, plan: RenderPlan, rng: random.Random) -> np.ndarray:
+    def _render_melody(self, total_samples: int, sample_rate: int, beat: float, root: int, scale: list[int], spec: MusicSpec, plan: RenderPlan, rng: random.Random, arrangement: list[dict[str, Any]]) -> np.ndarray:
         audio = np.zeros(total_samples, dtype=np.float32)
         melody = self._section(plan, "melody")
         shape_name = self._choice(melody.get("shape"), self.MELODY_SHAPES, self._default_melody_shape(spec))
@@ -940,11 +1099,13 @@ class PythonMusicRenderer:
             if phrase_item is None:
                 continue
             phrase_pos = step % len(phrase)
-            if activity < 0.42 and phrase_pos not in {0, 4, 8, 12}:
-                continue
-            if activity < 0.62 and phrase_pos % 2 == 1:
-                continue
             bar_idx = int((step * step_dur) // bar)
+            segment = self._segment_for_bar(bar_idx, arrangement)
+            effective_activity = _clamp(activity + self._density_shift(segment), 0.0, 1.0)
+            if effective_activity < 0.42 and phrase_pos not in {0, 4, 8, 12}:
+                continue
+            if effective_activity < 0.62 and phrase_pos % 2 == 1:
+                continue
             chord_degree = progression[bar_idx % len(progression)]
             if shape_name in {"arpeggio", "call_response"}:
                 degree = chord_degree + int(phrase_item)
@@ -952,11 +1113,12 @@ class PythonMusicRenderer:
                 degree = int(phrase_item) + 1
             else:
                 degree = int(phrase_item)
+            degree += int(segment.get("melody_shift", 0))
             midi = self._scale_degree_midi(root, scale, degree, register_octave)
             dur = step_dur * (0.58 if shape in {"square", "pulse", "saw"} else 0.82)
             if shape_name == "stepwise":
                 dur = step_dur * 1.35
-            self._add_note(audio, sample_rate, step * step_dur, dur, midi, gain, shape, brightness, attack, release)
+            self._add_note(audio, sample_rate, step * step_dur, dur, midi, gain * self._role_gain(segment, "melody"), shape, brightness, attack, release)
         return audio
 
     def _render_texture(self, total_samples: int, sample_rate: int, spec: MusicSpec, plan: RenderPlan, rng: random.Random) -> np.ndarray:
@@ -1022,20 +1184,46 @@ class PythonMusicRenderer:
 
     def _make_loopable(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:
         n = len(audio)
-        fade = min(int(0.35 * sample_rate), n // 8)
-        if fade <= 4:
+        if n <= 8:
             return audio
+        candidates = []
+        for fade_sec in (0.25, 0.45, 0.7, 1.0):
+            fade = min(int(fade_sec * sample_rate), n // 6)
+            if fade <= 4:
+                continue
+            candidate = self._crossfade_loop(audio.copy(), fade, sample_rate)
+            candidates.append((self._loop_boundary_score(candidate, sample_rate), candidate))
+        if not candidates:
+            return audio
+        candidates.sort(key=lambda item: item[0])
+        return candidates[0][1]
+
+    def _crossfade_loop(self, audio: np.ndarray, fade: int, sample_rate: int) -> np.ndarray:
         head = audio[:fade].copy()
         tail = audio[-fade:].copy()
         curve = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+        curve = curve * curve * (3.0 - 2.0 * curve)
         blend = tail * (1.0 - curve) + head * curve
         audio[:fade] = blend
         audio[-fade:] = blend
-        micro = min(int(0.025 * sample_rate), n // 16)
+        micro = min(int(0.03 * sample_rate), len(audio) // 16)
         if micro > 4:
-            audio[:micro] *= np.linspace(0.0, 1.0, micro, dtype=np.float32)
-            audio[-micro:] *= np.linspace(1.0, 0.0, micro, dtype=np.float32)
+            curve_in = np.linspace(0.0, 1.0, micro, dtype=np.float32)
+            curve_out = np.linspace(1.0, 0.0, micro, dtype=np.float32)
+            audio[:micro] *= curve_in * curve_in
+            audio[-micro:] *= curve_out * curve_out
         return audio
+
+    def _loop_boundary_score(self, audio: np.ndarray, sample_rate: int) -> float:
+        window = min(int(0.08 * sample_rate), len(audio) // 10)
+        if window <= 4:
+            return 0.0
+        head = audio[:window]
+        tail = audio[-window:]
+        diff = float(np.sqrt(np.mean((head - tail) ** 2)))
+        level = float(np.sqrt(np.mean(head**2) + np.mean(tail**2))) + 1e-6
+        endpoint = abs(float(audio[0]) - float(audio[-1]))
+        return diff / level + endpoint
 
     def _master(self, audio: np.ndarray, plan: RenderPlan) -> np.ndarray:
         audio = np.tanh(audio * 1.15).astype(np.float32)
@@ -1061,7 +1249,7 @@ class PythonMusicRenderer:
     "astrbot_plugin_pymusic",
     "Lenovo",
     "Generate pure Python WAV music from prompts and send it to QQ chats.",
-    "0.1.4",
+    "0.1.5",
     repo="https://github.com/blueraina/astrbot_plugin_pymusic",
 )
 class PyMusicPlugin(Star):
@@ -1156,7 +1344,7 @@ class PyMusicPlugin(Star):
         plan = await self._build_plan(brief, event, spec)
         wav_path = self.data_dir / f"pymusic_{int(time.time())}_{random.randint(1000, 9999)}.wav"
         sample_rate = self._sample_rate()
-        await asyncio.to_thread(self.renderer.render, spec, plan, wav_path, sample_rate)
+        await asyncio.to_thread(self.renderer.render, spec, plan, wav_path, sample_rate, self._diversity_level())
         if not wav_path.exists() or wav_path.stat().st_size <= 44:
             raise RuntimeError("WAV 文件没有成功生成")
         return brief, spec, plan, wav_path
@@ -1178,7 +1366,7 @@ class PyMusicPlugin(Star):
         user_prompt = (
             f"Original user prompt: {prompt}\n"
             f"Defaults: duration={duration}, loopable={loopable}, send_mode={send_mode}. "
-            f"Max duration={self._max_duration()}.\n"
+            f"Max duration={self._max_duration()}. Diversity level={self._diversity_level()} where 0=stable, 1=balanced, 2=bold.\n"
             "Make sparse input sound intentional and musical."
         )
         try:
@@ -1221,7 +1409,8 @@ class PyMusicPlugin(Star):
         return fallback
 
     async def _build_plan(self, brief: PromptBrief, event: AstrMessageEvent, spec: MusicSpec) -> RenderPlan:
-        fallback = _default_plan(spec)
+        diversity_level = self._diversity_level()
+        fallback = _default_plan(spec, diversity_level)
         provider = self._get_music_provider(event)
         if provider is None:
             return fallback
@@ -1236,6 +1425,7 @@ class PyMusicPlugin(Star):
             "chords.progression: i-VI-III-VII, i-iv-V-i, I-V-vi-IV, ii-V-I, modal_drone; chords.voicing: soft/open/stabs/drone. "
             "melody.shape: arpeggio, call_response, pentatonic, stepwise, random_walk, motif_variation; melody.register: low/mid/high. "
             "texture.noise: vinyl/tape/air/space/none. effects: delay/reverb/lowpass booleans. master.target_peak 0.3..0.98. "
+            "For diversity_level 0 choose stable conventional patterns; for 1 use balanced variation; for 2 choose bolder patterns, fills, and melody shapes. "
             "Keep values simple and renderer-friendly."
         )
         try:
@@ -1243,6 +1433,7 @@ class PyMusicPlugin(Star):
                 "original_prompt": brief.original_prompt,
                 "enriched_prompt": brief.enriched_prompt,
                 "music_spec": spec.__dict__,
+                "diversity_level": diversity_level,
             }
             response = await provider.text_chat(prompt=json.dumps(plan_input, ensure_ascii=False), system_prompt=system_prompt)
             data = _extract_json(getattr(response, "completion_text", "") or str(response))
@@ -1297,6 +1488,9 @@ class PyMusicPlugin(Star):
 
     def _waveform_loopable(self) -> bool:
         return bool(_cfg_get(self.config, "waveform_loopable", True))
+
+    def _diversity_level(self) -> int:
+        return _normalize_diversity_level(_cfg_get(self.config, "diversity_level", DEFAULT_DIVERSITY_LEVEL))
 
     def _default_send_mode(self) -> str:
         return _normalize_send_mode(_cfg_get(self.config, "default_send_mode", "auto"), "auto")

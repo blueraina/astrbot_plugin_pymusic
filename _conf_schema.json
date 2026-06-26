@@ -35,6 +35,17 @@
     "obvious_hint": true,
     "hint": "开启后会自动对齐小节、周期化乐句，并做首尾 crossfade；会稍微压短混响尾巴"
   },
+  "diversity_level": {
+    "type": "int",
+    "description": "多样性强度",
+    "default": 1,
+    "hint": "0=稳定，1=均衡，2=大胆；越高越容易使用 B 段变化、过门和更跳脱的旋律/鼓组",
+    "slider": {
+      "min": 0,
+      "max": 2,
+      "step": 1
+    }
+  },
   "default_send_mode": {
     "type": "string",
     "description": "默认发送模式",
