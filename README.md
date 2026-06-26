@@ -88,7 +88,7 @@
 - `max_duration_sec`：最大生成时长，默认 600 秒
 - `default_duration_sec`：默认生成时长，默认 20 秒
 - `music_provider_id`：音乐规划模型，下拉选择；留空则跟随当前会话默认模型
-- `model_call_timeout_sec`：模型规划单步超时，默认 12 秒，范围 3 到 20 秒
+- `model_call_timeout_sec`：模型规划单步超时，默认 12 秒；插件不设上限，低于 1 秒会按 1 秒处理。Agent tool 外层可能仍有 60 秒总超时
 - `waveform_loopable`：是否启用波形级无缝循环，默认开启
 - `diversity_level`：多样性强度，0=稳定，1=均衡，2=大胆
 - `default_send_mode`：默认发送模式，默认 `auto`
@@ -101,6 +101,7 @@
 - `file`：发送 WAV 文件
 - `auto`：先尝试语音，失败后自动发送文件
 - 超过 60 秒的音频会直接按文件发送
+- `auto` 下如果语音发送接口长时间无响应，会自动改发文件
 
 QQ 语音发送能力取决于当前适配器。如果某个 QQ 适配器不支持直接发送 WAV 语音，建议使用 `auto` 或 `file`。
 

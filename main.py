@@ -28,7 +28,8 @@ DEFAULT_DURATION = 20
 DEFAULT_SAMPLE_RATE = 44100
 DEFAULT_DIVERSITY_LEVEL = 1
 DEFAULT_MODEL_CALL_TIMEOUT_SECONDS = 12
-MAX_MODEL_CALL_TIMEOUT_SECONDS = 20
+VOICE_SEND_TIMEOUT_SECONDS = 8
+FILE_SEND_TIMEOUT_SECONDS = 20
 
 
 @dataclass
@@ -1258,7 +1259,7 @@ class PythonMusicRenderer:
     "astrbot_plugin_pymusic",
     "Lenovo",
     "Generate pure Python WAV music from prompts and send it to QQ chats.",
-    "0.1.7",
+    "0.1.8",
     repo="https://github.com/blueraina/astrbot_plugin_pymusic",
 )
 class PyMusicPlugin(Star):
@@ -1300,7 +1301,11 @@ class PyMusicPlugin(Star):
                 logger.exception("[pymusic] generation failed")
                 return f"pymusic failed to generate music: {exc}"
 
-        sent_mode = await self._send_music(event, wav_path, spec)
+        try:
+            sent_mode = await self._send_music(event, wav_path, spec)
+        except Exception as exc:
+            logger.exception("[pymusic] send failed")
+            return f"Generated a {spec.duration}s {spec.mood} WAV music clip, but sending failed: {exc}"
         self._cleanup_history()
         return f"Generated a {spec.duration}s {spec.mood} WAV music clip and sent it as {sent_mode}. Enriched prompt: {brief.enriched_prompt}"
 
@@ -1460,14 +1465,20 @@ class PyMusicPlugin(Star):
 
         if mode in {"voice", "auto"}:
             try:
-                await event.send(MessageChain([Record.fromFileSystem(str(wav_path))]))
+                await asyncio.wait_for(
+                    event.send(MessageChain([Record.fromFileSystem(str(wav_path))])),
+                    timeout=VOICE_SEND_TIMEOUT_SECONDS,
+                )
                 return "voice"
             except Exception as exc:
                 logger.warning(f"[pymusic] voice send failed: {exc}")
                 if mode == "voice":
                     raise
 
-        await event.send(MessageChain([File(name=wav_path.name, file=str(wav_path))]))
+        await asyncio.wait_for(
+            event.send(MessageChain([File(name=wav_path.name, file=str(wav_path))])),
+            timeout=FILE_SEND_TIMEOUT_SECONDS,
+        )
         return "file"
 
     def _is_supported_platform(self, event: AstrMessageEvent) -> bool:
@@ -1530,12 +1541,11 @@ class PyMusicPlugin(Star):
         return _safe_int(_cfg_get(self.config, "sample_rate", DEFAULT_SAMPLE_RATE), DEFAULT_SAMPLE_RATE, 16000, 48000)
 
     def _model_call_timeout(self) -> int:
-        return _safe_int(
-            _cfg_get(self.config, "model_call_timeout_sec", DEFAULT_MODEL_CALL_TIMEOUT_SECONDS),
-            DEFAULT_MODEL_CALL_TIMEOUT_SECONDS,
-            3,
-            MAX_MODEL_CALL_TIMEOUT_SECONDS,
-        )
+        try:
+            value = int(_cfg_get(self.config, "model_call_timeout_sec", DEFAULT_MODEL_CALL_TIMEOUT_SECONDS))
+        except Exception:
+            value = DEFAULT_MODEL_CALL_TIMEOUT_SECONDS
+        return max(1, value)
 
     def _keep_history_wav(self) -> bool:
         return bool(_cfg_get(self.config, "keep_history_wav", False))
