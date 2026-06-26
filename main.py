@@ -166,10 +166,16 @@ def _prompt_overrides(prompt: str) -> dict[str, Any]:
 
 
 def _parse_command_payload(payload: str) -> tuple[int | None, str]:
+    payload = _strip_command_prefix(payload)
     match = re.match(r"^\s*(\d{1,4})\s*(?:秒|s|sec|second|seconds)?\s+(.+)$", payload.strip(), re.I)
     if not match:
         return None, ""
     return int(match.group(1)), match.group(2).strip()
+
+
+def _strip_command_prefix(text: str) -> str:
+    text = text.strip()
+    return re.sub(r"^/?pymusic(?:\s+|$)", "", text, flags=re.I).strip()
 
 
 def _fallback_spec(prompt: str, default_duration: int, max_duration: int, default_send_mode: str, loopable_default: bool) -> MusicSpec:
@@ -1259,7 +1265,7 @@ class PythonMusicRenderer:
     "astrbot_plugin_pymusic",
     "Lenovo",
     "Generate pure Python WAV music from prompts and send it to QQ chats.",
-    "0.1.8",
+    "0.1.9",
     repo="https://github.com/blueraina/astrbot_plugin_pymusic",
 )
 class PyMusicPlugin(Star):
@@ -1491,10 +1497,9 @@ class PyMusicPlugin(Star):
         for attr in ("message_str", "text"):
             value = getattr(event, attr, None)
             if isinstance(value, str) and value.strip():
-                text = value.strip()
-                return re.sub(r"^/pymusic\s*", "", text, flags=re.I).strip()
+                return _strip_command_prefix(value)
         try:
-            return re.sub(r"^/pymusic\s*", "", event.get_message_str(), flags=re.I).strip()
+            return _strip_command_prefix(event.get_message_str())
         except Exception:
             return ""
 
