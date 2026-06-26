@@ -6,7 +6,7 @@
 
 ## 功能
 
-- 指令：`/pymusic <音乐提示词>`
+- 指令：`/pymusic 时间(秒) 提示词`
 - Agent 工具：`generate_python_music`
 - 使用 `numpy`、`wave`、`math`、`random` 等纯 Python 方式合成 WAV
 - 不接入外部音乐生成 API
@@ -31,12 +31,12 @@
 ## 使用方法
 
 ```text
-/pymusic 20秒 8bit 夜晚城市 可循环
-/pymusic lofi 雨天 30秒 文件
-/pymusic ambient 星空 慢一点
+/pymusic 20 8bit 夜晚城市 可循环
+/pymusic 30 lofi 雨天 文件
+/pymusic 45 ambient 星空 慢一点
 ```
 
-`/pymusic` 后面的剩余文本会被当作音乐提示词。
+`/pymusic` 后面的第一个参数是生成时长，单位秒；后面的剩余文本会被当作音乐提示词。`20` 和 `20秒` 都可以。
 
 ## 生成流程
 

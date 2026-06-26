@@ -27,6 +27,7 @@ HARD_MAX_SECONDS = 600
 DEFAULT_DURATION = 20
 DEFAULT_SAMPLE_RATE = 44100
 DEFAULT_DIVERSITY_LEVEL = 1
+MODEL_CALL_TIMEOUT_SECONDS = 12
 
 
 @dataclass
@@ -160,6 +161,13 @@ def _prompt_overrides(prompt: str) -> dict[str, Any]:
     if "不要循环" in prompt or "不循环" in prompt:
         loopable = False
     return {"duration": duration, "send_mode": send_mode, "loopable": loopable}
+
+
+def _parse_command_payload(payload: str) -> tuple[int | None, str]:
+    match = re.match(r"^\s*(\d{1,4})\s*(?:秒|s|sec|second|seconds)?\s+(.+)$", payload.strip(), re.I)
+    if not match:
+        return None, ""
+    return int(match.group(1)), match.group(2).strip()
 
 
 def _fallback_spec(prompt: str, default_duration: int, max_duration: int, default_send_mode: str, loopable_default: bool) -> MusicSpec:
@@ -1249,7 +1257,7 @@ class PythonMusicRenderer:
     "astrbot_plugin_pymusic",
     "Lenovo",
     "Generate pure Python WAV music from prompts and send it to QQ chats.",
-    "0.1.5",
+    "0.1.6",
     repo="https://github.com/blueraina/astrbot_plugin_pymusic",
 )
 class PyMusicPlugin(Star):
@@ -1300,9 +1308,10 @@ class PyMusicPlugin(Star):
             yield event.chain_result([Plain("pymusic 目前只支持 QQ 个人号适配器和 QQ 官方机器人。")])
             return
 
-        prompt = self._message_text(event).strip()
-        if not prompt:
-            yield event.chain_result([Plain("用法：/pymusic 20秒 8bit 夜晚城市 可循环")])
+        payload = self._message_text(event).strip()
+        requested_duration, prompt = _parse_command_payload(payload)
+        if requested_duration is None or not prompt:
+            yield event.chain_result([Plain("用法：/pymusic 时间(秒) 提示词\n例如：/pymusic 20 8bit 夜晚城市 可循环")])
             return
 
         cooldown_key = self._cooldown_key(event)
@@ -1314,7 +1323,7 @@ class PyMusicPlugin(Star):
         yield event.chain_result([Plain("正在用纯 Python 合成音乐，请稍等。")])
 
         overrides = _prompt_overrides(prompt)
-        duration = _safe_int(overrides["duration"], self._default_duration(), 5, self._max_duration()) if overrides["duration"] else self._default_duration()
+        duration = _safe_int(requested_duration, self._default_duration(), 5, self._max_duration())
         loopable = self._waveform_loopable() if overrides["loopable"] is None else bool(overrides["loopable"])
         send_mode = _normalize_send_mode(overrides["send_mode"], self._default_send_mode())
 
@@ -1370,7 +1379,7 @@ class PyMusicPlugin(Star):
             "Make sparse input sound intentional and musical."
         )
         try:
-            response = await provider.text_chat(prompt=user_prompt, system_prompt=system_prompt)
+            response = await self._provider_text_chat(provider, user_prompt, system_prompt)
             data = _extract_json(getattr(response, "completion_text", "") or str(response))
             if data:
                 return _brief_from_dict(data, prompt, fallback)
@@ -1400,7 +1409,7 @@ class PyMusicPlugin(Star):
             f"Max duration={self._max_duration()}."
         )
         try:
-            response = await provider.text_chat(prompt=user_prompt, system_prompt=system_prompt)
+            response = await self._provider_text_chat(provider, user_prompt, system_prompt)
             data = _extract_json(getattr(response, "completion_text", "") or str(response))
             if data:
                 return _spec_from_dict(data, fallback, self._max_duration())
@@ -1435,7 +1444,7 @@ class PyMusicPlugin(Star):
                 "music_spec": spec.__dict__,
                 "diversity_level": diversity_level,
             }
-            response = await provider.text_chat(prompt=json.dumps(plan_input, ensure_ascii=False), system_prompt=system_prompt)
+            response = await self._provider_text_chat(provider, json.dumps(plan_input, ensure_ascii=False), system_prompt)
             data = _extract_json(getattr(response, "completion_text", "") or str(response))
             if data:
                 return _plan_from_dict(data, fallback)
@@ -1509,6 +1518,12 @@ class PyMusicPlugin(Star):
             except Exception as exc:
                 logger.warning(f"[pymusic] failed to load configured provider {provider_id}: {exc}")
         return self.context.get_using_provider(event.unified_msg_origin)
+
+    async def _provider_text_chat(self, provider: Any, prompt: str, system_prompt: str) -> Any:
+        return await asyncio.wait_for(
+            provider.text_chat(prompt=prompt, system_prompt=system_prompt),
+            timeout=MODEL_CALL_TIMEOUT_SECONDS,
+        )
 
     def _sample_rate(self) -> int:
         return _safe_int(_cfg_get(self.config, "sample_rate", DEFAULT_SAMPLE_RATE), DEFAULT_SAMPLE_RATE, 16000, 48000)
