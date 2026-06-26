@@ -512,6 +512,7 @@ class PythonMusicRenderer:
     "Lenovo",
     "Generate pure Python WAV music from prompts and send it to QQ chats.",
     "0.1.1",
+    repo="https://github.com/blueraina/astrbot_plugin_pymusic",
 )
 class PyMusicPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None) -> None:
