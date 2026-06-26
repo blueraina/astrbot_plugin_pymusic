@@ -1,0 +1,54 @@
+{
+  "max_duration_sec": {
+    "type": "int",
+    "description": "最大生成时长（秒）",
+    "default": 180,
+    "hint": "插件硬上限默认 180 秒；超过 60 秒会自动改为文件发送",
+    "slider": {
+      "min": 5,
+      "max": 180,
+      "step": 5
+    }
+  },
+  "default_duration_sec": {
+    "type": "int",
+    "description": "默认生成时长（秒）",
+    "default": 20,
+    "hint": "用户未指定时长时使用；建议 15 到 30 秒",
+    "slider": {
+      "min": 5,
+      "max": 60,
+      "step": 5
+    }
+  },
+  "waveform_loopable": {
+    "type": "bool",
+    "description": "启用波形级无缝循环",
+    "default": true,
+    "obvious_hint": true,
+    "hint": "开启后会自动对齐小节、周期化乐句，并做首尾 crossfade；会稍微压短混响尾巴"
+  },
+  "default_send_mode": {
+    "type": "string",
+    "description": "默认发送模式",
+    "default": "auto",
+    "hint": "可选 auto / voice / file；auto 会先尝试语音，失败后发文件"
+  },
+  "sample_rate": {
+    "type": "int",
+    "description": "输出采样率",
+    "default": 44100,
+    "hint": "常用 22050 / 32000 / 44100；采样率越高文件越大",
+    "slider": {
+      "min": 16000,
+      "max": 48000,
+      "step": 1000
+    }
+  },
+  "keep_history_wav": {
+    "type": "bool",
+    "description": "保留历史 WAV",
+    "default": false,
+    "hint": "关闭时会尽量清理旧文件，只保留最近少量临时产物"
+  }
+}
