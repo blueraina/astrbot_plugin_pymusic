@@ -37,8 +37,10 @@ FILE_SEND_TIMEOUT_SECONDS = 20
 TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
     {
         "id": "arrangement_motifs",
+        "category": "structure",
         "keywords": ["melody", "motif", "theme", "variation", "旋律", "动机", "主题", "变奏"],
         "summary": "general arrangement grammar",
+        "basis": "common composition practice",
         "guide": (
             "Create 2-3 original motifs, an A/B or call-response shape, phrase-level variation every 4 or 8 bars, "
             "and avoid looping one short note list unchanged for the whole piece."
@@ -46,8 +48,10 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "ambient_pad",
+        "category": "style",
         "keywords": ["ambient", "pad", "drone", "space", "cold", "winter", "星空", "宇宙", "寒冬", "冰", "空灵", "氛围"],
         "summary": "slow ambient pad, drone, and space",
+        "basis": "ambient synthesis practice",
         "guide": (
             "Use long pads or drones, sparse bell/pluck notes, slow filter or amplitude motion, airy noise texture, "
             "wide reverb/delay, and gradual harmonic color changes."
@@ -55,8 +59,10 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "8bit_chiptune",
+        "category": "style",
         "keywords": ["8bit", "chiptune", "chip", "pixel", "game", "arcade", "像素", "游戏", "复古"],
         "summary": "chip lead, pulse bass, and noise drums",
+        "basis": "chiptune synthesis practice",
         "guide": (
             "Use square/pulse/triangle oscillators, short envelopes, arpeggio or counter-melody writing, "
             "noise kick/snare/hat, and playful register changes."
@@ -64,26 +70,120 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "lofi_hiphop",
+        "category": "style",
         "keywords": ["lofi", "chill", "rain", "cafe", "study", "雨", "咖啡", "学习", "放松", "夜晚"],
         "summary": "warm lofi keys and swung drums",
+        "basis": "lofi beatmaking practice",
         "guide": (
             "Use warm keys or soft plucks, 7th/9th-flavored harmony, lazy swung drums, mellow bass, vinyl/tape noise, "
             "lowpass color, and small timing/level imperfections."
         ),
     },
     {
-        "id": "fm_bell",
-        "keywords": ["bell", "crystal", "ice", "magic", "star", "铃", "铃声", "冰晶", "魔法", "星"],
-        "summary": "FM bell or glassy pluck accents",
+        "id": "euclidean_drums",
+        "category": "composition",
+        "keywords": ["drum", "rhythm", "groove", "beat", "techno", "hat", "kick", "鼓", "节奏", "律动", "电子"],
+        "summary": "Euclidean rhythm for lively drum placement",
+        "basis": "Toussaint 2005",
         "guide": (
-            "Use simple FM-like sidebands or additive partials for glassy bell notes, quick attack, long release, "
-            "echo, and sparse melodic accents above the main harmony."
+            "Distribute k hits across n steps with a Euclidean/Bjorklund-like pattern for hats, claps, ghost kicks, "
+            "or percussion, then add accents and small rests so the beat is structured but not rigid."
+        ),
+    },
+    {
+        "id": "markov_melody",
+        "category": "composition",
+        "keywords": ["melody", "continuation", "answer", "phrase", "旋律", "接话", "回答句", "延续"],
+        "summary": "Markov-style phrase continuation",
+        "basis": "Pachet 2003",
+        "guide": (
+            "Generate a first motif, then choose following notes from small transition rules based on the previous "
+            "degree or interval so the answer phrase feels related without copying the same loop."
+        ),
+    },
+    {
+        "id": "motif_recombine",
+        "category": "composition",
+        "keywords": ["motif", "variation", "recombine", "oracle", "变奏", "重组", "发展", "动机"],
+        "summary": "motif recombination and controlled reuse",
+        "basis": "Variable Markov Oracle practice",
+        "guide": (
+            "Create short motif cells, then recombine, invert, transpose, stretch, or truncate them for B phrases and "
+            "fills so repetition has memory and development."
+        ),
+    },
+    {
+        "id": "lsystem_phrase",
+        "category": "composition",
+        "keywords": ["long", "evolve", "fractal", "growth", "develop", "长", "发展", "推进", "生成"],
+        "summary": "rule-expanded phrase growth",
+        "basis": "Prusinkiewicz 1986",
+        "guide": (
+            "Start from a compact symbol phrase and apply 1-3 simple rewrite rules to create longer note or rhythm "
+            "sequences, then map symbols to scale degrees, rests, or register shifts."
+        ),
+    },
+    {
+        "id": "pingpong_arpeggio",
+        "category": "composition",
+        "keywords": ["arp", "arpeggio", "8bit", "chiptune", "game", "琶音", "像素", "游戏"],
+        "summary": "forward-backward arpeggio motion",
+        "basis": "algorithmic pattern practice",
+        "guide": (
+            "Walk chord tones forward then backward, rotate the start point between bars, and answer the lead or bass "
+            "rhythm so arpeggios feel intentional instead of mechanical."
+        ),
+    },
+    {
+        "id": "random_walk_melody",
+        "category": "composition",
+        "keywords": ["random", "walk", "wandering", "ambient", "lofi", "游走", "随机", "氛围"],
+        "summary": "bounded random-walk melodic motion",
+        "basis": "algorithmic composition practice",
+        "guide": (
+            "Move through a scale with mostly stepwise intervals, occasional leaps, and reflection at register bounds; "
+            "anchor important beats on chord tones."
+        ),
+    },
+    {
+        "id": "stutter_pattern",
+        "category": "composition",
+        "keywords": ["stutter", "glitch", "idm", "fill", "break", "卡顿", "故障", "过门"],
+        "summary": "short repeats and glitch fills",
+        "basis": "electronic pattern practice",
+        "guide": (
+            "Repeat tiny note or drum fragments near phrase ends, with quick gates or rests, to create fills without "
+            "making the main groove chaotic."
+        ),
+    },
+    {
+        "id": "phase_pattern",
+        "category": "composition",
+        "keywords": ["phase", "minimal", "techno", "pulse", "minimalism", "相位", "极简", "脉冲"],
+        "summary": "slowly shifting repeated pattern",
+        "basis": "minimal/process music practice",
+        "guide": (
+            "Layer two related patterns of slightly different lengths or accents, then let their alignment drift over "
+            "bars for evolving minimal electronic motion."
+        ),
+    },
+    {
+        "id": "fm_synthesis",
+        "category": "synthesis",
+        "keywords": ["bell", "crystal", "ice", "magic", "star", "铃", "铃声", "冰晶", "魔法", "星"],
+        "summary": "FM bell, bass, and metallic tone color",
+        "basis": "Chowning 1973",
+        "guide": (
+            "Use carrier plus modulator oscillators, with an envelope on modulation index, for glassy bells, icy plucks, "
+            "metallic hits, or expressive FM bass timbre."
         ),
     },
     {
         "id": "acid_bass",
+        "category": "style",
         "keywords": ["acid", "cyber", "techno", "rave", "dark", "赛博", "地下", "紧张", "黑暗"],
         "summary": "acid/electro bass movement",
+        "basis": "acid/electro synthesis practice",
         "guide": (
             "Use a saw or square bassline with accents, slides or octave jumps, resonant-filter-like brightness motion, "
             "four-on-floor or broken electronic drums, and evolving automation."
@@ -91,8 +191,10 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "noise_texture",
+        "category": "synthesis",
         "keywords": ["noise", "wind", "rain", "tape", "vinyl", "风", "雨", "噪声", "磁带"],
         "summary": "controlled noise and texture layer",
+        "basis": "computer music noise synthesis",
         "guide": (
             "Use filtered noise for wind, rain, vinyl, tape hiss, risers, or soft percussion, with envelopes and volume "
             "automation so texture supports the music instead of masking it."
@@ -100,20 +202,123 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "karplus_pluck",
+        "category": "synthesis",
         "keywords": ["pluck", "guitar", "harp", "string", "拨弦", "吉他", "竖琴", "弦"],
         "summary": "pluck or string-like synthesis",
+        "basis": "Karplus-Strong 1983",
         "guide": (
             "Use short noise bursts, decaying resonant or comb-like tones, or bright pluck envelopes for guitar/harp-like "
             "parts, then vary pitch and decay across phrases."
         ),
     },
     {
+        "id": "bandlimited_saw",
+        "category": "synthesis",
+        "keywords": ["saw", "supersaw", "lead", "acid", "bright", "锯齿", "明亮", "贝斯"],
+        "summary": "less harsh saw-like waveform",
+        "basis": "Stilson and Smith 1996",
+        "guide": (
+            "Approximate a band-limited saw by summing only harmonics below Nyquist or by softening a naive saw with "
+            "lowpass-style shaping, especially for bright leads and bass."
+        ),
+    },
+    {
+        "id": "bandlimited_square",
+        "category": "synthesis",
+        "keywords": ["square", "pulse", "pwm", "8bit", "chiptune", "方波", "脉冲", "像素"],
+        "summary": "less harsh square or pulse waveform",
+        "basis": "Stilson and Smith 1996",
+        "guide": (
+            "Approximate square or pulse waves with odd harmonics below Nyquist, optional PWM motion, and short envelopes "
+            "so chip leads stay bright without excessive aliasing."
+        ),
+    },
+    {
+        "id": "additive_pad",
+        "category": "synthesis",
+        "keywords": ["pad", "warm", "ambient", "choir", "soft", "铺底", "温暖", "氛围"],
+        "summary": "layered additive pad partials",
+        "basis": "additive synthesis practice",
+        "guide": (
+            "Combine several low-amplitude partials, slow detune/LFO movement, and long envelopes for a pad that evolves "
+            "without needing samples."
+        ),
+    },
+    {
+        "id": "subtractive_bass",
+        "category": "synthesis",
+        "keywords": ["bass", "sub", "acid", "filter", "techno", "贝斯", "低频", "滤波"],
+        "summary": "subtractive bass with envelope-shaped brightness",
+        "basis": "subtractive synthesis practice",
+        "guide": (
+            "Start with saw/square/triangle bass, then simulate filter envelope by changing harmonic mix or lowpass-like "
+            "brightness over each note."
+        ),
+    },
+    {
+        "id": "noise_drum_resonator",
+        "category": "synthesis",
+        "keywords": ["drum", "snare", "hat", "kick", "percussion", "鼓", "军鼓", "镲", "打击"],
+        "summary": "noise-based synthetic percussion",
+        "basis": "Karplus-Strong/noise percussion practice",
+        "guide": (
+            "Shape filtered noise and short sine sweeps into kick, snare, hat, click, or tom sounds, with different "
+            "decay times and accents."
+        ),
+    },
+    {
         "id": "wavetable_lead",
+        "category": "synthesis",
         "keywords": ["lead", "synth", "electronic", "bright", "future", "电子", "合成器", "明亮"],
         "summary": "wavetable-like lead and evolving timbre",
+        "basis": "wavetable synthesis practice",
         "guide": (
             "Blend sine/saw/square/triangle shapes, crossfade or modulate brightness over time, and write lead phrases "
             "that answer the bass or chord rhythm."
+        ),
+    },
+    {
+        "id": "schroeder_reverb",
+        "category": "effect",
+        "keywords": ["reverb", "space", "ambient", "room", "hall", "混响", "空间", "大厅"],
+        "summary": "light comb/allpass-style artificial reverb",
+        "basis": "Schroeder 1962",
+        "guide": (
+            "Use a few short feedback delays and allpass-like diffusers or repeated quiet taps to add space while keeping "
+            "CPU and memory simple."
+        ),
+    },
+    {
+        "id": "moorer_reverb",
+        "category": "effect",
+        "keywords": ["reverb", "early", "reflection", "tail", "lofi", "ambient", "反射", "尾巴"],
+        "summary": "early reflections plus smoother reverb tail",
+        "basis": "Moorer 1979",
+        "guide": (
+            "Add a small pattern of early reflections before the reverb tail, then keep wet level controlled so the mix "
+            "stays clear."
+        ),
+    },
+    {
+        "id": "loopable_ab_cycle",
+        "category": "structure",
+        "keywords": ["loop", "loopable", "cycle", "seamless", "循环", "可循环", "无缝"],
+        "summary": "periodic A/B cycle for seamless loops",
+        "basis": "loop-based composition practice",
+        "guide": (
+            "Use a periodic A/B or A/B/A cycle, align phrase lengths to bars, avoid one-shot intros/outros, and keep "
+            "effect tails either short or wrapped into the next cycle."
+        ),
+    },
+    {
+        "id": "tension_release",
+        "category": "structure",
+        "keywords": ["build", "drop", "tension", "release", "energy", "推进", "爆发", "张力", "释放"],
+        "summary": "energy curve and release moments",
+        "basis": "electronic arrangement practice",
+        "guide": (
+            "Shape density, register, filter brightness, and drum activity into small build-and-release arcs instead of "
+            "keeping the same intensity throughout."
         ),
     },
 )
@@ -216,14 +421,14 @@ def _normalize_diversity_level(value: Any, default: int = DEFAULT_DIVERSITY_LEVE
 
 def _technique_catalog() -> str:
     return "\n".join(
-        f"- {guide['id']}: {guide['summary']}. {guide['guide']}"
+        f"- {guide['id']} [{guide.get('category', 'general')}]: {guide['summary']}. {guide['guide']}"
         for guide in TECHNIQUE_GUIDES
     )
 
 
 def _format_technique_guides(guides: list[dict[str, Any]]) -> str:
     return "\n".join(
-        f"- {guide['id']}: {guide['guide']}"
+        f"- {guide['id']} [{guide.get('category', 'general')}, {guide.get('basis', 'practice')}]: {guide['guide']}"
         for guide in guides
     )
 
@@ -250,9 +455,16 @@ def _select_technique_guides(brief: PromptBrief, spec: MusicSpec | None = None, 
     scored: list[tuple[int, int, dict[str, Any]]] = []
     for index, guide in enumerate(TECHNIQUE_GUIDES):
         guide_id = str(guide["id"])
+        category = str(guide.get("category", "general"))
         score = 0
         if guide_id == "arrangement_motifs":
             score += 8
+        elif category == "composition":
+            score += 1
+        elif category == "synthesis":
+            score += 1
+        elif category in {"effect", "structure"}:
+            score += 1
         if guide_id in text or guide_id.replace("_", " ") in text:
             score += 10
         if guide_id in ref_text or guide_id.replace("_", " ") in ref_text:
@@ -264,56 +476,115 @@ def _select_technique_guides(brief: PromptBrief, spec: MusicSpec | None = None, 
 
         if spec is not None:
             style_text = f"{spec.mood} {' '.join(spec.instruments)} {' '.join(spec.effects)}".lower()
+            if spec.loopable and guide_id == "loopable_ab_cycle":
+                score += 8
             if guide_id == "ambient_pad" and ("ambient" in style_text or "pad" in style_text or "drone" in style_text):
                 score += 4
             elif guide_id == "8bit_chiptune" and ("8bit" in style_text or "chip" in style_text):
                 score += 4
             elif guide_id == "lofi_hiphop" and "lofi" in style_text:
                 score += 4
-            elif guide_id == "fm_bell" and ("bell" in style_text or spec.brightness > 0.72):
+            elif guide_id == "euclidean_drums" and (spec.density > 0.48 or "drum" in style_text or "beat" in style_text):
+                score += 4
+            elif guide_id == "markov_melody":
                 score += 3
+            elif guide_id == "motif_recombine" and diversity_level >= 1:
+                score += 3
+            elif guide_id == "lsystem_phrase" and spec.duration >= 45:
+                score += 4
+            elif guide_id == "pingpong_arpeggio" and ("8bit" in style_text or "chip" in style_text or spec.brightness > 0.7):
+                score += 4
+            elif guide_id == "random_walk_melody" and ("ambient" in style_text or "lofi" in style_text or spec.energy < 0.48):
+                score += 4
+            elif guide_id == "stutter_pattern" and (diversity_level >= 2 or spec.energy > 0.68):
+                score += 3
+            elif guide_id == "phase_pattern" and ("techno" in style_text or "minimal" in style_text or "acid" in style_text):
+                score += 4
+            elif guide_id == "fm_synthesis" and ("bell" in style_text or "ice" in text or "crystal" in text or spec.brightness > 0.72):
+                score += 4
             elif guide_id == "acid_bass" and ("acid" in style_text or spec.energy > 0.7):
                 score += 3
             elif guide_id == "noise_texture" and ("noise" in style_text or "reverb" in style_text):
                 score += 3
             elif guide_id == "karplus_pluck" and "pluck" in style_text:
                 score += 3
+            elif guide_id == "bandlimited_saw" and ("saw" in style_text or "acid" in style_text or spec.energy > 0.68):
+                score += 3
+            elif guide_id == "bandlimited_square" and ("8bit" in style_text or "chip" in style_text or "square" in style_text):
+                score += 4
+            elif guide_id == "additive_pad" and ("ambient" in style_text or "pad" in style_text):
+                score += 4
+            elif guide_id == "subtractive_bass" and ("bass" in style_text or "acid" in style_text or spec.energy > 0.6):
+                score += 3
+            elif guide_id == "noise_drum_resonator" and (spec.density > 0.5 or "drum" in style_text or "8bit" in style_text):
+                score += 3
             elif guide_id == "wavetable_lead" and ("lead" in style_text or "synth" in style_text or "electronic" in style_text):
                 score += 3
+            elif guide_id == "schroeder_reverb" and ("ambient" in style_text or "reverb" in style_text or spec.energy < 0.5):
+                score += 4
+            elif guide_id == "moorer_reverb" and ("lofi" in style_text or "reverb" in style_text):
+                score += 3
+            elif guide_id == "tension_release" and not spec.loopable:
+                score += 3
 
-        if diversity_level >= 2 and guide_id in {"acid_bass", "karplus_pluck", "wavetable_lead"}:
+        if diversity_level >= 2 and guide_id in {"acid_bass", "karplus_pluck", "wavetable_lead", "stutter_pattern", "phase_pattern", "lsystem_phrase"}:
             score += 1
         scored.append((score, index, guide))
 
     scored.sort(key=lambda item: (-item[0], item[1]))
-    limit = 5 if diversity_level >= 2 else 4
+    limit = 8 if diversity_level >= 2 else 6
     selected: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for score, _, guide in scored:
+
+    def add_guide(guide: dict[str, Any]) -> None:
         guide_id = str(guide["id"])
-        if score <= 0:
-            continue
         if guide_id in seen:
-            continue
+            return
         selected.append(guide)
         seen.add(guide_id)
+
+    def add_guide_by_id(guide_id: str) -> None:
+        for candidate in TECHNIQUE_GUIDES:
+            if candidate["id"] == guide_id:
+                add_guide(candidate)
+                return
+
+    def add_top_category(category: str, fallback_id: str) -> None:
+        if any(str(guide.get("category")) == category for guide in selected):
+            return
+        for score, _, guide in scored:
+            if score <= 0:
+                continue
+            if str(guide.get("category")) == category:
+                add_guide(guide)
+                return
+        add_guide_by_id(fallback_id)
+
+    add_guide_by_id("arrangement_motifs")
+    add_top_category("composition", "markov_melody")
+    add_top_category("synthesis", "fm_synthesis")
+    if spec is not None and spec.loopable:
+        add_guide_by_id("loopable_ab_cycle")
+    else:
+        add_top_category("effect", "schroeder_reverb")
+        add_top_category("structure", "tension_release")
+
+    for score, _, guide in scored:
+        if score <= 0:
+            continue
+        if str(guide["id"]) in seen:
+            continue
+        add_guide(guide)
         if len(selected) >= limit:
             break
 
-    if "arrangement_motifs" not in seen:
-        selected.insert(0, TECHNIQUE_GUIDES[0])
-        seen.add("arrangement_motifs")
-    default_ids = ("wavetable_lead", "noise_texture", "lofi_hiphop")
+    default_ids = ("markov_melody", "fm_synthesis", "wavetable_lead", "noise_texture")
     for default_id in default_ids:
-        if len(selected) >= 3:
+        if len(selected) >= min(4, limit):
             break
         if default_id in seen:
             continue
-        for guide in TECHNIQUE_GUIDES:
-            if guide["id"] == default_id:
-                selected.append(guide)
-                seen.add(default_id)
-                break
+        add_guide_by_id(default_id)
     return selected[:limit]
 
 
@@ -507,15 +778,15 @@ def _fallback_brief(prompt: str) -> PromptBrief:
     technique_refs = ["arrangement_motifs"]
     lower_prompt = prompt.lower()
     if style == "ambient" or any(word in lower_prompt or word in prompt for word in ["ambient", "winter", "ice", "cold", "lonely", "wind", "氛围", "星空", "宇宙", "空灵", "寒冬", "冰", "冷", "冬", "孤独", "风"]):
-        technique_refs.extend(["ambient_pad", "fm_bell", "noise_texture"])
+        technique_refs.extend(["ambient_pad", "random_walk_melody", "fm_synthesis", "additive_pad", "schroeder_reverb", "noise_texture"])
     elif "lofi" in style_text:
-        technique_refs.extend(["lofi_hiphop", "noise_texture"])
+        technique_refs.extend(["lofi_hiphop", "euclidean_drums", "markov_melody", "karplus_pluck", "moorer_reverb", "noise_texture"])
     elif "8bit" in style_text or "chip" in style_text:
-        technique_refs.extend(["8bit_chiptune", "wavetable_lead"])
+        technique_refs.extend(["8bit_chiptune", "pingpong_arpeggio", "euclidean_drums", "bandlimited_square", "noise_drum_resonator", "stutter_pattern"])
     elif "acid" in style_text or "dark" in style_text or "electronic" in style_text:
-        technique_refs.extend(["acid_bass", "wavetable_lead", "noise_texture"])
+        technique_refs.extend(["acid_bass", "euclidean_drums", "subtractive_bass", "bandlimited_saw", "phase_pattern", "tension_release"])
     else:
-        technique_refs.extend(["wavetable_lead", "lofi_hiphop"])
+        technique_refs.extend(["markov_melody", "motif_recombine", "wavetable_lead", "fm_synthesis", "tension_release"])
     enriched = (
         f"A polished {style} instrumental loop for the scene '{prompt}'. "
         f"Use {instruments}, {fallback.bpm} BPM, {fallback.key}, "
@@ -1546,7 +1817,7 @@ class PythonMusicRenderer:
     "astrbot_plugin_pymusic",
     "Lenovo",
     "Generate pure Python WAV music from prompts and send it to QQ chats.",
-    "0.2.1",
+    "0.3.0",
     repo="https://github.com/blueraina/astrbot_plugin_pymusic",
 )
 class PyMusicPlugin(Star):
@@ -1672,7 +1943,7 @@ class PyMusicPlugin(Star):
             "references array of short strings, avoid array of short strings. "
             "The enriched_prompt should describe mood, genre, tempo feel, instruments, rhythm, harmony, melody, texture, effects, mix, and arrangement arc. "
             "Infer concrete musical intent for sparse prompts instead of repeating the user's words. "
-            "Use references for 2-4 recommended technique ids from the provided catalog, plus optional short texture references. "
+            "Use references for 3-6 recommended technique ids from the provided catalog, preferably mixing structure, composition, synthesis, effect, and style categories. "
             "These technique ids are composition grammar, not fixed songs or fixed code. "
             "Use only electronic, 8bit, ambient, lofi, or nearby pure-synth styles. Avoid vocals, lyrics, external samples, and copyrighted artist imitation."
         )
@@ -1682,7 +1953,7 @@ class PyMusicPlugin(Star):
             f"Max duration={self._max_duration()}. Diversity level={self._diversity_level()} where 0=stable, 1=balanced, 2=bold.\n"
             "Available technique catalog:\n"
             f"{_technique_catalog()}\n"
-            "Make sparse input sound intentional and musical. Prefer technique ids that match the prompt; do not invent artist names."
+            "Make sparse input sound intentional and musical. Prefer technique ids that match the prompt; do not invent artist names or unsupported technique ids."
         )
         try:
             response = await self._provider_text_chat(provider, user_prompt, system_prompt)
@@ -1705,7 +1976,8 @@ class PyMusicPlugin(Star):
             "Fields: mood string, energy number 0..1, brightness number 0..1, density number 0..1, "
             "bpm integer 55..180, key string, instruments array of strings, effects array of strings, "
             "duration integer seconds, loopable boolean, send_mode string voice/file/auto. "
-            "Use the technique ids as stylistic hints for instruments/effects, but do not output fixed code or a fixed melody."
+            "Use the technique ids as stylistic hints for instruments/effects, but do not output fixed code or a fixed melody. "
+            "If references contain algorithmic composition or synthesis ids, reflect them in instruments/effects when possible."
         )
         user_prompt = (
             f"Original prompt: {brief.original_prompt}\n"
@@ -1741,8 +2013,10 @@ class PyMusicPlugin(Star):
             "Do not use os, sys, subprocess, pathlib, sockets, network, eval, exec, open, or __import__. "
             "Do not use external samples or any music-generation API. "
             "Use the selected technique guides as style grammar, not as fixed templates. Invent original notes, rhythms, timbres, and section choices for this exact brief. "
+            "If a selected guide describes Euclidean rhythm, Markov continuation, L-system phrases, FM, Karplus-Strong, band-limited waveforms, or Schroeder/Moorer reverb, implement a lightweight version directly with lists/numpy/math; do not import a music library. "
             "Hard musical requirements: build from beat/bar timing derived from bpm; create drums or rhythmic texture, bass, chords/pad, and melody/lead/texture layers when stylistically appropriate; "
             "use at least two motifs or motif transformations; include A/B, call-response, or phrase variation; vary register, rhythm, density, harmony, timbre, fill, or effect motion every 4 or 8 bars; "
+            "use at least one selected composition algorithm and one selected synthesis algorithm when those categories are present; "
             "avoid repeating one short melody array unchanged for the whole duration; use envelopes and at least two of LFO/modulation, filter-like tone shaping, FM/additive/wavetable/subtractive synthesis, noise percussion, delay, or reverb. "
             "For ambient, drums may be replaced by subtle pulse/noise motion, but the piece still needs evolving layers and melodic identity. "
             "For loopable=True, make phrase lengths periodic, avoid one-shot intros/outros, and keep delay/reverb tails compatible with looping. "
@@ -1758,7 +2032,7 @@ class PyMusicPlugin(Star):
                 "musical_intent": brief.musical_intent,
                 "technique_references": brief.references,
                 "selected_technique_guides": [
-                    {"id": guide["id"], "summary": guide["summary"], "guide": guide["guide"]}
+                    {"id": guide["id"], "category": guide.get("category"), "basis": guide.get("basis"), "summary": guide["summary"], "guide": guide["guide"]}
                     for guide in technique_guides
                 ],
                 "music_spec": spec.__dict__,
@@ -1772,6 +2046,8 @@ class PyMusicPlugin(Star):
                         "original motifs, not a stock phrase",
                         "section or phrase variation",
                         "separate musical layers",
+                        "at least one selected composition algorithm when present",
+                        "at least one selected synthesis algorithm when present",
                         "ADSR/envelopes plus modulation or effects",
                     ],
                 },
@@ -1909,7 +2185,7 @@ with wave.open(str(out_path), "wb") as wf:
                 "enriched_prompt": brief.enriched_prompt,
                 "technique_references": brief.references,
                 "selected_technique_guides": [
-                    {"id": guide["id"], "summary": guide["summary"]}
+                    {"id": guide["id"], "category": guide.get("category"), "basis": guide.get("basis"), "summary": guide["summary"]}
                     for guide in technique_guides
                 ],
                 "music_spec": spec.__dict__,

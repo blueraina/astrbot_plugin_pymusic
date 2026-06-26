@@ -11,7 +11,7 @@
 - 使用 `numpy`、`wave`、`math`、`random` 等纯 Python 方式合成 WAV
 - 不接入外部音乐生成 API
 - 支持模型把简陋输入先扩写成专业音乐 brief
-- 内置“音乐技法知识层”，会为 brief 和代码生成选择合适的电子乐/8bit/ambient/lofi 合成与编曲手法
+- 内置“音乐技法知识层”，会为 brief 和代码生成选择合适的电子乐/8bit/ambient/lofi 风格、作曲算法、合成算法和效果手法
 - AI 直接生成 Python 合成代码，输出 WAV；固定渲染器作为失败兜底
 - 仅支持 QQ 个人号适配器和 QQ 官方机器人适配器
 - 支持 `voice`、`file`、`auto` 三种发送模式
@@ -58,19 +58,50 @@
 
 插件内置的是“技法卡片”，不是固定曲谱模板，也不是固定代码模板。它们只告诉模型某类音乐常见的合成和编曲语法，具体旋律、节奏、和弦、音色公式和段落安排仍由模型每次根据提示词原创。
 
-当前技法卡片包括：
+当前技法卡片分成几类：
+
+结构/编曲：
 
 - `arrangement_motifs`：多动机、A/B 段、问答句、每 4/8 小节变化
-- `ambient_pad`：长 pad、drone、空间感、慢速滤波/音量运动
-- `8bit_chiptune`：方波/三角波、pulse bass、noise 鼓、游戏感琶音
-- `lofi_hiphop`：温暖键盘、swing 鼓、低通、vinyl/tape 噪声
-- `fm_bell`：FM 铃声、冰晶感、稀疏高频点缀和回声
-- `acid_bass`：saw/square bass、accent、滑音/八度跳跃、滤波运动
-- `noise_texture`：风声、雨声、磁带底噪、柔和噪声打击乐
-- `karplus_pluck`：拨弦/竖琴/吉他质感的短促衰减音色
-- `wavetable_lead`：混合基础波形并随时间改变亮度的 lead
+- `loopable_ab_cycle`：适合无缝循环的周期化 A/B 或 A/B/A 结构
+- `tension_release`：用密度、音区、鼓组和音色变化做小型推进与释放
 
-例如用户只写“寒冬”，模型增强 prompt 时可能会选择 `ambient_pad`、`fm_bell`、`noise_texture`；用户写“像素冒险”，则更可能选择 `8bit_chiptune`、`arrangement_motifs`、`wavetable_lead`。
+作曲算法：
+
+- `euclidean_drums`：参考 Toussaint 2005 的 Euclidean rhythm，让鼓点分布更自然
+- `markov_melody`：参考 Pachet 2003 的 Continuator/Markov 思路，让旋律有“接话感”
+- `motif_recombine`：把短动机重组、转位、移调或拉伸成 B 段
+- `lsystem_phrase`：参考 Prusinkiewicz 1986，用简单重写规则把短乐句扩展成长段落
+- `pingpong_arpeggio`：正向/反向琶音，适合 8bit 和电子
+- `random_walk_melody`：有边界的音阶随机游走，适合 ambient/lofi
+- `stutter_pattern`：短重复和 glitch 过门
+- `phase_pattern`：相位错开的极简重复型
+
+合成算法：
+
+- `fm_synthesis`：参考 Chowning 1973 的 FM 合成，做铃声、冰晶、金属、FM bass
+- `karplus_pluck`：参考 Karplus-Strong 1983，做拨弦、竖琴、短促共振音
+- `bandlimited_saw`：参考 Stilson & Smith 1996 的 band-limited waveform 思路，降低锯齿波刺耳感
+- `bandlimited_square`：参考 Stilson & Smith 1996 的 band-limited waveform 思路，降低方波/脉冲波刺耳感
+- `additive_pad`：加法合成 pad，适合 ambient 铺底
+- `subtractive_bass`：用谐波混合/低通感运动模拟 subtractive bass
+- `noise_drum_resonator`：噪声鼓、hat、snare、click、tom
+- `wavetable_lead`：混合基础波形并随时间改变亮度的 lead
+- `noise_texture`：风声、雨声、磁带底噪、柔和噪声打击乐
+
+效果：
+
+- `schroeder_reverb`：参考 Schroeder 1962 混响，轻量 comb/allpass 空间感
+- `moorer_reverb`：参考 Moorer 1979 混响，early reflections + 更平滑尾巴
+
+风格卡：
+
+- `ambient_pad`
+- `8bit_chiptune`
+- `lofi_hiphop`
+- `acid_bass`
+
+例如用户只写“寒冬”，模型增强 prompt 时可能会选择 `ambient_pad`、`random_walk_melody`、`fm_synthesis`、`additive_pad`、`schroeder_reverb`、`noise_texture`；用户写“像素冒险”，则更可能选择 `8bit_chiptune`、`pingpong_arpeggio`、`euclidean_drums`、`bandlimited_square`、`noise_drum_resonator`。
 
 ## AI Python 渲染
 
@@ -82,6 +113,7 @@
 - 至少使用两个动机或动机变形
 - 使用 A/B、问答句或乐句变奏
 - 每 4/8 小节改变音区、节奏、密度、和声、音色、过门或效果运动
+- 尽量至少实现一个选中的作曲算法和一个选中的合成算法
 - 使用 envelope，并结合 LFO/调制、滤波式音色塑形、FM/additive/wavetable/subtractive、noise percussion、delay/reverb 中的若干手法
 - `loopable=True` 时避免一次性 intro/outro，并让乐句周期适合首尾衔接
 
