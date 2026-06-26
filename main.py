@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import math
 import os
 import random
 import re
+import subprocess
+import sys
 import time
 import wave
 from dataclasses import dataclass, field
@@ -144,6 +147,84 @@ def _extract_json(text: str) -> dict[str, Any] | None:
         return data if isinstance(data, dict) else None
     except Exception:
         return None
+
+
+def _extract_python_code(text: str) -> str:
+    text = text.strip()
+    fenced = re.search(r"```(?:python|py)?\s*(.*?)\s*```", text, re.S | re.I)
+    if fenced:
+        text = fenced.group(1).strip()
+    return text
+
+
+def _validate_generated_python(source: str) -> None:
+    if len(source) > 18000:
+        raise ValueError("generated Python code is too long")
+    tree = ast.parse(source)
+    allowed_imports = {"numpy", "math", "random"}
+    blocked_names = {
+        "open",
+        "exec",
+        "eval",
+        "compile",
+        "input",
+        "__import__",
+        "globals",
+        "locals",
+        "vars",
+        "dir",
+        "help",
+        "breakpoint",
+        "os",
+        "sys",
+        "subprocess",
+        "pathlib",
+        "shutil",
+        "socket",
+        "requests",
+        "httpx",
+        "wave",
+        "builtins",
+    }
+    blocked_attrs = {
+        "save",
+        "savez",
+        "load",
+        "fromfile",
+        "tofile",
+        "memmap",
+        "genfromtxt",
+        "loadtxt",
+        "savetxt",
+        "ctypeslib",
+    }
+    has_render = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".", 1)[0]
+                parts = set(alias.name.split("."))
+                if root not in allowed_imports or parts & blocked_attrs:
+                    raise ValueError(f"disallowed import: {alias.name}")
+        elif isinstance(node, ast.ImportFrom):
+            root = (node.module or "").split(".", 1)[0]
+            parts = set((node.module or "").split("."))
+            alias_parts = {alias.name.split(".", 1)[0] for alias in node.names}
+            if node.level != 0 or root not in allowed_imports or parts & blocked_attrs or alias_parts & blocked_attrs:
+                raise ValueError(f"disallowed import: {node.module}")
+        elif isinstance(node, ast.ClassDef):
+            raise ValueError("classes are not allowed in generated renderer code")
+        elif isinstance(node, ast.FunctionDef):
+            if node.name == "render":
+                has_render = True
+        elif isinstance(node, ast.Name):
+            if node.id in blocked_names or node.id.startswith("__"):
+                raise ValueError(f"disallowed name: {node.id}")
+        elif isinstance(node, ast.Attribute):
+            if node.attr.startswith("__") or node.attr in blocked_attrs:
+                raise ValueError(f"disallowed attribute: {node.attr}")
+    if not has_render:
+        raise ValueError("generated code must define render(duration, sample_rate, loopable)")
 
 
 def _prompt_overrides(prompt: str) -> dict[str, Any]:
@@ -1265,7 +1346,7 @@ class PythonMusicRenderer:
     "astrbot_plugin_pymusic",
     "Lenovo",
     "Generate pure Python WAV music from prompts and send it to QQ chats.",
-    "0.1.9",
+    "0.2.0",
     repo="https://github.com/blueraina/astrbot_plugin_pymusic",
 )
 class PyMusicPlugin(Star):
@@ -1362,10 +1443,18 @@ class PyMusicPlugin(Star):
         spec = await self._build_spec(brief, event, duration, loopable, send_mode)
         if spec.duration > VOICE_MAX_SECONDS and spec.send_mode in {"voice", "auto"}:
             spec.send_mode = "file"
-        plan = await self._build_plan(brief, event, spec)
+        plan = _default_plan(spec, self._diversity_level())
         wav_path = self.data_dir / f"pymusic_{int(time.time())}_{random.randint(1000, 9999)}.wav"
         sample_rate = self._sample_rate()
-        await asyncio.to_thread(self.renderer.render, spec, plan, wav_path, sample_rate, self._diversity_level())
+        ai_code = await self._build_python_renderer_code(brief, event, spec)
+        if ai_code:
+            try:
+                await asyncio.to_thread(self._run_ai_python_renderer, ai_code, wav_path, spec.duration, sample_rate, spec.loopable)
+            except Exception as exc:
+                logger.warning(f"[pymusic] AI Python renderer failed, using fixed renderer fallback: {exc}")
+        if not wav_path.exists() or wav_path.stat().st_size <= 44:
+            plan = await self._build_plan(brief, event, spec)
+            await asyncio.to_thread(self.renderer.render, spec, plan, wav_path, sample_rate, self._diversity_level())
         if not wav_path.exists() or wav_path.stat().st_size <= 44:
             raise RuntimeError("WAV 文件没有成功生成")
         return brief, spec, plan, wav_path
@@ -1428,6 +1517,141 @@ class PyMusicPlugin(Star):
         except Exception as exc:
             logger.warning(f"[pymusic] MusicSpec LLM planning failed, using fallback: {exc}")
         return fallback
+
+    async def _build_python_renderer_code(self, brief: PromptBrief, event: AstrMessageEvent, spec: MusicSpec) -> str | None:
+        provider = self._get_music_provider(event)
+        if provider is None:
+            return None
+        system_prompt = (
+            "You write pure Python DSP code for a sandboxed music renderer. "
+            "Return Python code only, no markdown, no explanation. "
+            "The code must define exactly one callable: render(duration, sample_rate, loopable). "
+            "render must return a one-dimensional numpy array of float audio samples in -1..1. "
+            "Allowed imports: numpy as np, math, random. Do not read or write files. Do not use os, sys, subprocess, pathlib, sockets, network, eval, exec, open, or __import__. "
+            "Use numpy synthesis: oscillators, envelopes, drums, bass, chords, melody, pads, noise, delay/reverb if useful. "
+            "The music should be complete and musical, with a distinctive melody derived from the brief, not a fixed stock phrase. "
+            "For loopable=True, make phrase lengths periodic and avoid one-shot intros/outros."
+        )
+        user_prompt = json.dumps(
+            {
+                "original_prompt": brief.original_prompt,
+                "enriched_prompt": brief.enriched_prompt,
+                "style": brief.style,
+                "scene": brief.scene,
+                "musical_intent": brief.musical_intent,
+                "music_spec": spec.__dict__,
+                "requirements": {
+                    "duration": spec.duration,
+                    "sample_rate_runtime_argument": True,
+                    "loopable": spec.loopable,
+                    "mono_float_array": True,
+                    "pure_python_numpy": True,
+                },
+            },
+            ensure_ascii=False,
+        )
+        try:
+            response = await self._provider_text_chat(provider, user_prompt, system_prompt)
+            code = _extract_python_code(getattr(response, "completion_text", "") or str(response))
+            _validate_generated_python(code)
+            return code
+        except Exception as exc:
+            logger.warning(f"[pymusic] AI Python code generation failed, using fixed renderer fallback: {exc}")
+            return None
+
+    def _run_ai_python_renderer(self, code: str, wav_path: Path, duration: int, sample_rate: int, loopable: bool) -> None:
+        _validate_generated_python(code)
+        code_path = self.data_dir / f"pymusic_code_{int(time.time())}_{random.randint(1000, 9999)}.py"
+        code_path.write_text(code, encoding="utf-8")
+        runner = r'''
+import math
+import random
+import sys
+import wave
+from pathlib import Path
+
+import numpy as np
+
+code_path = Path(sys.argv[1])
+out_path = Path(sys.argv[2])
+duration = int(sys.argv[3])
+sample_rate = int(sys.argv[4])
+loopable = sys.argv[5] == "1"
+source = code_path.read_text(encoding="utf-8")
+
+allowed_modules = {"numpy": np, "math": math, "random": random}
+blocked_numpy_parts = {"ctypeslib", "lib", "testing", "distutils", "f2py"}
+
+def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+    root = name.split(".", 1)[0]
+    parts = set(name.split("."))
+    if level != 0 or root not in allowed_modules or parts & blocked_numpy_parts:
+        raise ImportError(f"import not allowed: {name}")
+    if root == "numpy":
+        return __import__(name, globals, locals, fromlist, level)
+    if root == "math":
+        return math
+    if root == "random":
+        return random
+    raise ImportError(f"import not allowed: {name}")
+
+safe_builtins = {
+    "__import__": safe_import,
+    "abs": abs,
+    "min": min,
+    "max": max,
+    "sum": sum,
+    "len": len,
+    "range": range,
+    "int": int,
+    "float": float,
+    "bool": bool,
+    "round": round,
+    "pow": pow,
+    "enumerate": enumerate,
+    "zip": zip,
+    "list": list,
+    "tuple": tuple,
+    "dict": dict,
+    "set": set,
+}
+env = {"__builtins__": safe_builtins, "np": np, "math": math, "random": random}
+exec(compile(source, str(code_path), "exec"), env)
+render = env.get("render")
+if not callable(render):
+    raise RuntimeError("render function missing")
+audio = render(duration, sample_rate, loopable)
+audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+target = max(1, int(duration * sample_rate))
+if len(audio) < target:
+    audio = np.pad(audio, (0, target - len(audio)))
+elif len(audio) > target:
+    audio = audio[:target]
+audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
+peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
+if peak > 1.0:
+    audio = audio / peak * 0.95
+pcm16 = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16)
+out_path.parent.mkdir(parents=True, exist_ok=True)
+with wave.open(str(out_path), "wb") as wf:
+    wf.setnchannels(1)
+    wf.setsampwidth(2)
+    wf.setframerate(sample_rate)
+    wf.writeframes(pcm16.tobytes())
+'''
+        timeout = max(20, min(180, int(duration / 2) + 20))
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", runner, str(code_path), str(wav_path), str(duration), str(sample_rate), "1" if loopable else "0"],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if result.returncode != 0:
+                detail = (result.stderr or result.stdout or "unknown AI renderer error").strip()[-800:]
+                raise RuntimeError(detail)
+        finally:
+            code_path.unlink(missing_ok=True)
 
     async def _build_plan(self, brief: PromptBrief, event: AstrMessageEvent, spec: MusicSpec) -> RenderPlan:
         diversity_level = self._diversity_level()

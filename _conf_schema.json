@@ -26,7 +26,7 @@
     "description": "音乐规划模型",
     "default": "",
     "_special": "select_provider",
-    "hint": "用于把用户提示词转成 MusicSpec 和 RenderPlan；留空则跟随当前会话默认模型"
+    "hint": "用于扩写提示词、生成 MusicSpec 和 AI Python 合成代码；留空则跟随当前会话默认模型"
   },
   "model_call_timeout_sec": {
     "type": "int",

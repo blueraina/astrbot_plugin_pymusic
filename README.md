@@ -2,7 +2,7 @@
 
 `astrbot_plugin_pymusic` 是一个 AstrBot 插件，可以根据用户提示词，用纯 Python 合成 WAV 音乐，并发送到 QQ 群或私聊。
 
-插件定位是一个可控的 Python 合成器，适合生成电子、8bit、ambient、lofi 等短音乐片段。它不调用外部音乐生成 API，也不会让模型自由执行 Python 代码。
+插件定位是一个可控的 Python 合成器，适合生成电子、8bit、ambient、lofi 等短音乐片段。它不调用外部音乐生成 API；模型会生成受限的 Python 合成函数，插件在子进程中执行并生成 WAV。
 
 ## 功能
 
@@ -11,7 +11,7 @@
 - 使用 `numpy`、`wave`、`math`、`random` 等纯 Python 方式合成 WAV
 - 不接入外部音乐生成 API
 - 支持模型把简陋输入先扩写成专业音乐 brief
-- 模型只输出结构化 JSON，固定渲染器负责生成音频
+- AI 直接生成 Python 合成代码，输出 WAV；固定渲染器作为失败兜底
 - 仅支持 QQ 个人号适配器和 QQ 官方机器人适配器
 - 支持 `voice`、`file`、`auto` 三种发送模式
 - 语音模式最长 60 秒，超过 60 秒自动改为文件发送
@@ -44,18 +44,30 @@
 用户输入
 -> PromptBrief / enriched_prompt
 -> MusicSpec
--> RenderPlan
--> 纯 Python 渲染 WAV
+-> AI 生成 Python 合成函数
+-> 受限子进程执行并渲染 WAV
+-> 失败时回退到固定 Python 渲染器
 -> QQ 发送
 ```
 
-如果用户输入很简略，例如“来点适合晚上写代码的音乐”，插件会先让模型扩写成更专业的音乐描述，补全风格、场景、速度感、乐器、节奏、和声、旋律、纹理、效果和混音方向，再进入结构化编曲流程。
+如果用户输入很简略，例如“来点适合晚上写代码的音乐”，插件会先让模型扩写成更专业的音乐描述，补全风格、场景、速度感、乐器、节奏、和声、旋律、纹理、效果和混音方向，再让模型基于这个 brief 编写 Python 合成函数。
 
-## 渲染器多样性
+## AI Python 渲染
 
-`RenderPlan` 现在会真正驱动渲染器分支，而不是只影响少量效果参数。
+主路径会让模型生成一个 `render(duration, sample_rate, loopable)` 函数。函数必须返回一维 `numpy` float 音频数组，插件负责归一化并写出 WAV。
 
-可用编曲分支包括：
+执行限制：
+
+- 允许使用 `numpy`、`math`、`random`
+- 不允许读写文件、访问网络、调用系统命令
+- 不允许使用 `os`、`sys`、`subprocess`、`pathlib`、`open`、`eval`、`exec`
+- 生成代码会先做 AST 校验，再放到独立 Python 子进程里运行
+
+如果模型不可用、代码校验失败、代码运行超时或没有生成有效 WAV，会自动回退到固定 Python 渲染器。
+
+## 兜底渲染器
+
+兜底渲染器可用编曲分支包括：
 
 - 和弦进行：`i-VI-III-VII`、`i-iv-V-i`、`I-V-vi-IV`、`ii-V-I`、`modal_drone`
 - 鼓组：`lofi_swing`、`8bit_arpeggio_beat`、`ambient_no_drums`、`breakbeat`、`minimal_techno`
@@ -64,7 +76,7 @@
 - 音色：`chip_lead`、`warm_keys`、`pluck`、`pad`、`bell`、`acid_bass`、`sub_drone`、`warm_bass`
 - 纹理：`vinyl`、`tape`、`air`、`space`、`none`
 
-模型只能选择这些白名单里的结构化字段。未知值会被渲染器自动回退到本地默认值。
+固定渲染器仍然使用白名单结构化字段。未知值会被渲染器自动回退到本地默认值。
 
 长音频会按内部段落结构渲染：非循环音频会尽量形成 intro、A 段、B 段、break、outro；循环音频会避免明显开头和结尾，改用更适合首尾衔接的 A/B/A 结构。鼓组会在乐句末尾和段落切换前加入轻量过门。
 
@@ -136,6 +148,6 @@ https://github.com/blueraina/astrbot_plugin_pymusic
 ## 注意
 
 - 插件不会调用外部音乐生成服务。
-- 模型只输出 `PromptBrief`、`MusicSpec` 和 `RenderPlan` 结构化 JSON，不执行 Python。
-- 渲染器会对模型输出做范围裁剪和兜底处理。
-- 如果模型不可用或 JSON 格式异常，插件会使用本地关键词规则生成兜底音乐。
+- 模型会输出 `PromptBrief`、`MusicSpec`，并在主路径生成受限 Python 合成代码。
+- AI 生成代码会经过 AST 校验和子进程执行限制。
+- 如果模型不可用、JSON 格式异常或生成代码失败，插件会使用固定渲染器生成兜底音乐。
