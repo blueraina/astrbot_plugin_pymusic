@@ -28,6 +28,17 @@
     "_special": "select_provider",
     "hint": "用于把用户提示词转成 MusicSpec 和 RenderPlan；留空则跟随当前会话默认模型"
   },
+  "model_call_timeout_sec": {
+    "type": "int",
+    "description": "模型规划单步超时（秒）",
+    "default": 12,
+    "hint": "PromptBrief / MusicSpec / RenderPlan 每一步模型调用的等待上限；Agent 工具建议 8 到 15 秒，超时会使用本地兜底",
+    "slider": {
+      "min": 3,
+      "max": 20,
+      "step": 1
+    }
+  },
   "waveform_loopable": {
     "type": "bool",
     "description": "启用波形级无缝循环",

@@ -27,7 +27,8 @@ HARD_MAX_SECONDS = 600
 DEFAULT_DURATION = 20
 DEFAULT_SAMPLE_RATE = 44100
 DEFAULT_DIVERSITY_LEVEL = 1
-MODEL_CALL_TIMEOUT_SECONDS = 12
+DEFAULT_MODEL_CALL_TIMEOUT_SECONDS = 12
+MAX_MODEL_CALL_TIMEOUT_SECONDS = 20
 
 
 @dataclass
@@ -1257,7 +1258,7 @@ class PythonMusicRenderer:
     "astrbot_plugin_pymusic",
     "Lenovo",
     "Generate pure Python WAV music from prompts and send it to QQ chats.",
-    "0.1.6",
+    "0.1.7",
     repo="https://github.com/blueraina/astrbot_plugin_pymusic",
 )
 class PyMusicPlugin(Star):
@@ -1522,11 +1523,19 @@ class PyMusicPlugin(Star):
     async def _provider_text_chat(self, provider: Any, prompt: str, system_prompt: str) -> Any:
         return await asyncio.wait_for(
             provider.text_chat(prompt=prompt, system_prompt=system_prompt),
-            timeout=MODEL_CALL_TIMEOUT_SECONDS,
+            timeout=self._model_call_timeout(),
         )
 
     def _sample_rate(self) -> int:
         return _safe_int(_cfg_get(self.config, "sample_rate", DEFAULT_SAMPLE_RATE), DEFAULT_SAMPLE_RATE, 16000, 48000)
+
+    def _model_call_timeout(self) -> int:
+        return _safe_int(
+            _cfg_get(self.config, "model_call_timeout_sec", DEFAULT_MODEL_CALL_TIMEOUT_SECONDS),
+            DEFAULT_MODEL_CALL_TIMEOUT_SECONDS,
+            3,
+            MAX_MODEL_CALL_TIMEOUT_SECONDS,
+        )
 
     def _keep_history_wav(self) -> bool:
         return bool(_cfg_get(self.config, "keep_history_wav", False))
