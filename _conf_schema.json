@@ -21,6 +21,13 @@
       "step": 5
     }
   },
+  "music_provider_id": {
+    "type": "string",
+    "description": "音乐规划模型",
+    "default": "",
+    "_special": "select_provider",
+    "hint": "用于把用户提示词转成 MusicSpec 和 RenderPlan；留空则跟随当前会话默认模型"
+  },
   "waveform_loopable": {
     "type": "bool",
     "description": "启用波形级无缝循环",

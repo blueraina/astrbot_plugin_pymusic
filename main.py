@@ -511,7 +511,7 @@ class PythonMusicRenderer:
     "astrbot_plugin_pymusic",
     "Lenovo",
     "Generate pure Python WAV music from prompts and send it to QQ chats.",
-    "0.1.0",
+    "0.1.1",
 )
 class PyMusicPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None) -> None:
@@ -523,20 +523,7 @@ class PyMusicPlugin(Star):
         self.rate_limiter = RateLimiter(cooldown_sec=30)
 
     @filter.command("pymusic")
-    @filter.platform_adapter_type("aiocqhttp")
-    async def pymusic_aiocqhttp(self, event: AstrMessageEvent) -> Any:
-        async for result in self._handle_command(event):
-            yield result
-
-    @filter.command("pymusic")
-    @filter.platform_adapter_type("qq_official")
-    async def pymusic_qqofficial(self, event: AstrMessageEvent) -> Any:
-        async for result in self._handle_command(event):
-            yield result
-
-    @filter.command("pymusic")
-    @filter.platform_adapter_type("qq_official_webhook")
-    async def pymusic_qqofficial_webhook(self, event: AstrMessageEvent) -> Any:
+    async def pymusic(self, event: AstrMessageEvent) -> Any:
         async for result in self._handle_command(event):
             yield result
 
@@ -624,7 +611,7 @@ class PyMusicPlugin(Star):
 
     async def _build_spec(self, prompt: str, event: AstrMessageEvent, duration: int, loopable: bool, send_mode: str) -> MusicSpec:
         fallback = _fallback_spec(prompt, duration, self._max_duration(), send_mode, loopable)
-        provider = self.context.get_using_provider(event.unified_msg_origin)
+        provider = self._get_music_provider(event)
         if provider is None:
             return fallback
         system_prompt = (
@@ -651,7 +638,7 @@ class PyMusicPlugin(Star):
 
     async def _build_plan(self, prompt: str, event: AstrMessageEvent, spec: MusicSpec) -> RenderPlan:
         fallback = _default_plan(spec)
-        provider = self.context.get_using_provider(event.unified_msg_origin)
+        provider = self._get_music_provider(event)
         if provider is None:
             return fallback
         system_prompt = (
@@ -717,6 +704,21 @@ class PyMusicPlugin(Star):
 
     def _default_send_mode(self) -> str:
         return _normalize_send_mode(_cfg_get(self.config, "default_send_mode", "auto"), "auto")
+
+    def _music_provider_id(self) -> str:
+        return str(_cfg_get(self.config, "music_provider_id", "") or "").strip()
+
+    def _get_music_provider(self, event: AstrMessageEvent) -> Any:
+        provider_id = self._music_provider_id()
+        if provider_id:
+            try:
+                provider = self.context.get_provider_by_id(provider_id)
+                if provider is not None and hasattr(provider, "text_chat"):
+                    return provider
+                logger.warning(f"[pymusic] configured provider is unavailable or not chat-capable: {provider_id}")
+            except Exception as exc:
+                logger.warning(f"[pymusic] failed to load configured provider {provider_id}: {exc}")
+        return self.context.get_using_provider(event.unified_msg_origin)
 
     def _sample_rate(self) -> int:
         return _safe_int(_cfg_get(self.config, "sample_rate", DEFAULT_SAMPLE_RATE), DEFAULT_SAMPLE_RATE, 16000, 48000)
