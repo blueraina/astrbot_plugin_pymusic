@@ -2,11 +2,11 @@
   "max_duration_sec": {
     "type": "int",
     "description": "最大生成时长（秒）",
-    "default": 180,
-    "hint": "插件硬上限默认 180 秒；超过 60 秒会自动改为文件发送",
+    "default": 600,
+    "hint": "插件硬上限默认 600 秒；超过 60 秒会自动改为文件发送",
     "slider": {
       "min": 5,
-      "max": 180,
+      "max": 600,
       "step": 5
     }
   },

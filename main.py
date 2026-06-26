@@ -23,7 +23,7 @@ from astrbot.core.star.star_tools import StarTools
 SUPPORTED_PLATFORMS = {"aiocqhttp", "qq_official", "qq_official_webhook"}
 SEND_MODES = {"auto", "voice", "file"}
 VOICE_MAX_SECONDS = 60
-HARD_MAX_SECONDS = 180
+HARD_MAX_SECONDS = 600
 DEFAULT_DURATION = 20
 DEFAULT_SAMPLE_RATE = 44100
 
@@ -261,7 +261,8 @@ class PythonMusicRenderer:
         beat = 60.0 / bpm
         bar = beat * 4
         if spec.loopable:
-            bars = max(2, round(duration / bar))
+            max_bars = max(2, int(HARD_MAX_SECONDS / bar))
+            bars = min(max_bars, max(2, round(duration / bar)))
             duration = int(round(bars * bar))
 
         total_samples = int(duration * sample_rate)
@@ -511,7 +512,7 @@ class PythonMusicRenderer:
     "astrbot_plugin_pymusic",
     "Lenovo",
     "Generate pure Python WAV music from prompts and send it to QQ chats.",
-    "0.1.1",
+    "0.1.2",
     repo="https://github.com/blueraina/astrbot_plugin_pymusic",
 )
 class PyMusicPlugin(Star):

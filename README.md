@@ -54,7 +54,7 @@
 
 插件提供以下配置项：
 
-- `max_duration_sec`：最大生成时长，默认 180 秒
+- `max_duration_sec`：最大生成时长，默认 600 秒
 - `default_duration_sec`：默认生成时长，默认 20 秒
 - `music_provider_id`：音乐规划模型，下拉选择；留空则跟随当前会话默认模型
 - `waveform_loopable`：是否启用波形级无缝循环，默认开启
