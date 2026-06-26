@@ -11,7 +11,7 @@
 - 使用 `numpy`、`wave`、`math`、`random` 等纯 Python 方式合成 WAV
 - 不接入外部音乐生成 API
 - 适合电子、8bit、ambient、lofi 风格
-- 模型只负责输出结构化 JSON，插件负责校验并用固定渲染器生成音频
+- 模型先把简陋输入扩写成专业音乐 brief，再输出结构化 JSON，插件负责校验并用固定渲染器生成音频
 - 仅支持 QQ 个人号适配器和 QQ 官方机器人适配器
 - 支持 `voice`、`file`、`auto` 三种发送模式
 - 语音模式最长 60 秒，超过 60 秒会自动改为文件发送
@@ -36,6 +36,19 @@
 ```
 
 `/pymusic` 后面的剩余文本会被当作音乐提示词。
+
+## 生成流程
+
+```text
+用户输入
+-> PromptBrief / enriched_prompt
+-> MusicSpec
+-> RenderPlan
+-> 纯 Python 渲染 WAV
+-> QQ 发送
+```
+
+如果用户输入很简略，例如“来点适合晚上写代码的音乐”，插件会先让模型扩写成更专业的音乐描述，补全风格、场景、速度感、乐器、节奏、和声、旋律、纹理、效果和混音方向，再进入结构化编曲流程。
 
 ## Agent 工具
 
@@ -95,6 +108,6 @@ numpy>=1.23
 ## 注意
 
 - 插件不会调用外部音乐生成服务。
-- 模型只输出 `MusicSpec` 和 `RenderPlan` 结构化 JSON，不执行 Python。
+- 模型只输出 `PromptBrief`、`MusicSpec` 和 `RenderPlan` 结构化 JSON，不执行 Python。
 - 渲染器会对模型输出做范围裁剪和兜底处理。
 - 如果模型不可用或 JSON 格式异常，插件会使用本地关键词规则生成兜底音乐。

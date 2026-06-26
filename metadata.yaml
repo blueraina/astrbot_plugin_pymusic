@@ -1,7 +1,7 @@
 name: astrbot_plugin_pymusic
 desc: Generate pure Python WAV music from prompts and send it to QQ chats.
 help: Use /pymusic <music prompt> to generate an electronic, 8bit, ambient, or lofi WAV clip.
-version: v0.1.2
+version: v0.1.3
 author: Lenovo
 repo: "https://github.com/blueraina/astrbot_plugin_pymusic"
 support_platforms:

@@ -29,6 +29,17 @@ DEFAULT_SAMPLE_RATE = 44100
 
 
 @dataclass
+class PromptBrief:
+    original_prompt: str = ""
+    enriched_prompt: str = ""
+    style: str = "electronic"
+    scene: str = ""
+    musical_intent: str = ""
+    references: list[str] = field(default_factory=list)
+    avoid: list[str] = field(default_factory=list)
+
+
+@dataclass
 class MusicSpec:
     mood: str = "playful"
     energy: float = 0.55
@@ -195,6 +206,51 @@ def _fallback_spec(prompt: str, default_duration: int, max_duration: int, defaul
         duration=duration,
         loopable=loopable,
         send_mode=send_mode,
+    )
+
+
+def _fallback_brief(prompt: str) -> PromptBrief:
+    fallback = _fallback_spec(prompt, DEFAULT_DURATION, HARD_MAX_SECONDS, "auto", False)
+    style = fallback.mood
+    instruments = ", ".join(fallback.instruments[:4])
+    effects = ", ".join(fallback.effects[:3])
+    enriched = (
+        f"A polished {style} instrumental loop for the scene '{prompt}'. "
+        f"Use {instruments}, {fallback.bpm} BPM, {fallback.key}, "
+        f"energy {fallback.energy:.2f}, brightness {fallback.brightness:.2f}, "
+        f"density {fallback.density:.2f}, with {effects}. "
+        "Keep it melodic, coherent, and easy to listen to."
+    )
+    return PromptBrief(
+        original_prompt=prompt,
+        enriched_prompt=enriched,
+        style=style,
+        scene=prompt,
+        musical_intent="make a pleasant pure-Python generated instrumental clip",
+        references=fallback.instruments[:4],
+        avoid=["vocals", "external samples", "overly harsh noise"],
+    )
+
+
+def _brief_from_dict(data: dict[str, Any], original_prompt: str, fallback: PromptBrief) -> PromptBrief:
+    references = data.get("references", fallback.references)
+    avoid = data.get("avoid", fallback.avoid)
+    if not isinstance(references, list):
+        references = fallback.references
+    if not isinstance(avoid, list):
+        avoid = fallback.avoid
+
+    enriched = str(data.get("enriched_prompt", fallback.enriched_prompt)).strip()
+    if not enriched:
+        enriched = fallback.enriched_prompt
+    return PromptBrief(
+        original_prompt=original_prompt,
+        enriched_prompt=enriched[:1200],
+        style=str(data.get("style", fallback.style)).strip()[:80] or fallback.style,
+        scene=str(data.get("scene", fallback.scene)).strip()[:200] or fallback.scene,
+        musical_intent=str(data.get("musical_intent", fallback.musical_intent)).strip()[:300] or fallback.musical_intent,
+        references=[str(item).strip()[:80] for item in references[:8] if str(item).strip()],
+        avoid=[str(item).strip()[:80] for item in avoid[:8] if str(item).strip()],
     )
 
 
@@ -512,7 +568,7 @@ class PythonMusicRenderer:
     "astrbot_plugin_pymusic",
     "Lenovo",
     "Generate pure Python WAV music from prompts and send it to QQ chats.",
-    "0.1.2",
+    "0.1.3",
     repo="https://github.com/blueraina/astrbot_plugin_pymusic",
 )
 class PyMusicPlugin(Star):
@@ -549,14 +605,14 @@ class PyMusicPlugin(Star):
 
         async with self.render_sem:
             try:
-                spec, plan, wav_path = await self._generate(prompt, event, duration, loopable, send_mode)
+                brief, spec, plan, wav_path = await self._generate(prompt, event, duration, loopable, send_mode)
             except Exception as exc:
                 logger.exception("[pymusic] generation failed")
                 return f"pymusic failed to generate music: {exc}"
 
         sent_mode = await self._send_music(event, wav_path, spec)
         self._cleanup_history()
-        return f"Generated a {spec.duration}s {spec.mood} WAV music clip and sent it as {sent_mode}."
+        return f"Generated a {spec.duration}s {spec.mood} WAV music clip and sent it as {sent_mode}. Enriched prompt: {brief.enriched_prompt}"
 
     async def _handle_command(self, event: AstrMessageEvent) -> Any:
         if not self._is_supported_platform(event):
@@ -583,7 +639,7 @@ class PyMusicPlugin(Star):
 
         async with self.render_sem:
             try:
-                spec, plan, wav_path = await self._generate(prompt, event, duration, loopable, send_mode)
+                brief, spec, plan, wav_path = await self._generate(prompt, event, duration, loopable, send_mode)
             except Exception as exc:
                 logger.exception("[pymusic] generation failed")
                 yield event.chain_result([Plain(f"生成失败：{exc}")])
@@ -596,28 +652,58 @@ class PyMusicPlugin(Star):
             yield event.chain_result([Plain(f"音乐已生成，但发送失败：{wav_path}\n{exc}")])
             return
 
-        yield event.chain_result([Plain(f"pymusic 已生成：{spec.mood} / {spec.duration}s / {sent_mode}")])
+        yield event.chain_result([Plain(f"pymusic 已生成：{spec.mood} / {spec.duration}s / {sent_mode}\n理解为：{brief.enriched_prompt[:180]}")])
         self._cleanup_history()
 
-    async def _generate(self, prompt: str, event: AstrMessageEvent, duration: int, loopable: bool, send_mode: str) -> tuple[MusicSpec, RenderPlan, Path]:
-        spec = await self._build_spec(prompt, event, duration, loopable, send_mode)
+    async def _generate(self, prompt: str, event: AstrMessageEvent, duration: int, loopable: bool, send_mode: str) -> tuple[PromptBrief, MusicSpec, RenderPlan, Path]:
+        brief = await self._build_prompt_brief(prompt, event, duration, loopable, send_mode)
+        spec = await self._build_spec(brief, event, duration, loopable, send_mode)
         if spec.duration > VOICE_MAX_SECONDS and spec.send_mode in {"voice", "auto"}:
             spec.send_mode = "file"
-        plan = await self._build_plan(prompt, event, spec)
+        plan = await self._build_plan(brief, event, spec)
         wav_path = self.data_dir / f"pymusic_{int(time.time())}_{random.randint(1000, 9999)}.wav"
         sample_rate = self._sample_rate()
         await asyncio.to_thread(self.renderer.render, spec, plan, wav_path, sample_rate)
         if not wav_path.exists() or wav_path.stat().st_size <= 44:
             raise RuntimeError("WAV 文件没有成功生成")
-        return spec, plan, wav_path
+        return brief, spec, plan, wav_path
 
-    async def _build_spec(self, prompt: str, event: AstrMessageEvent, duration: int, loopable: bool, send_mode: str) -> MusicSpec:
-        fallback = _fallback_spec(prompt, duration, self._max_duration(), send_mode, loopable)
+    async def _build_prompt_brief(self, prompt: str, event: AstrMessageEvent, duration: int, loopable: bool, send_mode: str) -> PromptBrief:
+        fallback = _fallback_brief(prompt)
         provider = self._get_music_provider(event)
         if provider is None:
             return fallback
         system_prompt = (
-            "You convert a user music prompt into one strict JSON object named MusicSpec. "
+            "You are a music prompt producer for a deterministic pure-Python synthesizer. "
+            "Rewrite short or vague user input into one professional, concrete music brief. "
+            "Do not include markdown. Do not write Python. Return one strict JSON object. "
+            "Fields: enriched_prompt string, style string, scene string, musical_intent string, "
+            "references array of short strings, avoid array of short strings. "
+            "The enriched_prompt should describe mood, genre, tempo feel, instruments, rhythm, harmony, melody, texture, effects, and mix. "
+            "Use only electronic, 8bit, ambient, lofi, or nearby pure-synth styles. Avoid vocals and copyrighted artist imitation."
+        )
+        user_prompt = (
+            f"Original user prompt: {prompt}\n"
+            f"Defaults: duration={duration}, loopable={loopable}, send_mode={send_mode}. "
+            f"Max duration={self._max_duration()}.\n"
+            "Make sparse input sound intentional and musical."
+        )
+        try:
+            response = await provider.text_chat(prompt=user_prompt, system_prompt=system_prompt)
+            data = _extract_json(getattr(response, "completion_text", "") or str(response))
+            if data:
+                return _brief_from_dict(data, prompt, fallback)
+        except Exception as exc:
+            logger.warning(f"[pymusic] prompt enrichment failed, using fallback: {exc}")
+        return fallback
+
+    async def _build_spec(self, brief: PromptBrief, event: AstrMessageEvent, duration: int, loopable: bool, send_mode: str) -> MusicSpec:
+        fallback = _fallback_spec(f"{brief.original_prompt}\n{brief.enriched_prompt}", duration, self._max_duration(), send_mode, loopable)
+        provider = self._get_music_provider(event)
+        if provider is None:
+            return fallback
+        system_prompt = (
+            "You convert an enriched music brief into one strict JSON object named MusicSpec. "
             "Do not include markdown. Do not write Python. "
             "Allowed styles are electronic, 8bit, ambient, and lofi. "
             "Fields: mood string, energy number 0..1, brightness number 0..1, density number 0..1, "
@@ -625,7 +711,10 @@ class PyMusicPlugin(Star):
             "duration integer seconds, loopable boolean, send_mode string voice/file/auto."
         )
         user_prompt = (
-            f"Prompt: {prompt}\n"
+            f"Original prompt: {brief.original_prompt}\n"
+            f"Enriched prompt: {brief.enriched_prompt}\n"
+            f"Style: {brief.style}\n"
+            f"Scene: {brief.scene}\n"
             f"Defaults: duration={duration}, loopable={loopable}, send_mode={send_mode}. "
             f"Max duration={self._max_duration()}."
         )
@@ -638,7 +727,7 @@ class PyMusicPlugin(Star):
             logger.warning(f"[pymusic] MusicSpec LLM planning failed, using fallback: {exc}")
         return fallback
 
-    async def _build_plan(self, prompt: str, event: AstrMessageEvent, spec: MusicSpec) -> RenderPlan:
+    async def _build_plan(self, brief: PromptBrief, event: AstrMessageEvent, spec: MusicSpec) -> RenderPlan:
         fallback = _default_plan(spec)
         provider = self._get_music_provider(event)
         if provider is None:
@@ -650,7 +739,12 @@ class PyMusicPlugin(Star):
             "Keep values simple and renderer-friendly."
         )
         try:
-            response = await provider.text_chat(prompt=json.dumps(spec.__dict__, ensure_ascii=False), system_prompt=system_prompt)
+            plan_input = {
+                "original_prompt": brief.original_prompt,
+                "enriched_prompt": brief.enriched_prompt,
+                "music_spec": spec.__dict__,
+            }
+            response = await provider.text_chat(prompt=json.dumps(plan_input, ensure_ascii=False), system_prompt=system_prompt)
             data = _extract_json(getattr(response, "completion_text", "") or str(response))
             if data:
                 return _plan_from_dict(data, fallback)
