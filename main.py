@@ -29,6 +29,8 @@ DEFAULT_DURATION = 20
 DEFAULT_SAMPLE_RATE = 44100
 DEFAULT_DIVERSITY_LEVEL = 1
 DEFAULT_MODEL_CALL_TIMEOUT_SECONDS = 12
+DEFAULT_VARIATION_STRENGTH = 1
+MAX_RANDOM_SEED = 2**32 - 1
 VOICE_SEND_TIMEOUT_SECONDS = 8
 FILE_SEND_TIMEOUT_SECONDS = 20
 
@@ -594,6 +596,8 @@ class CompositionPlan:
     bpm: int = 110
     bar_count: int = 4
     phrase_bars: int = 4
+    variation_seed: int = 0
+    variation_strength: int = DEFAULT_VARIATION_STRENGTH
     selected_techniques: list[str] = field(default_factory=list)
     sections: list[dict[str, Any]] = field(default_factory=list)
     chords: dict[str, Any] = field(default_factory=dict)
@@ -1338,7 +1342,14 @@ def _composition_plan_from_dict(data: dict[str, Any]) -> CompositionPlan:
         sections = []
     return CompositionPlan(
         version=_safe_int(data.get("version", 2), 2, 1, 99),
-        seed=_safe_int(data.get("seed", 0), 0, 0, 2**31 - 1),
+        seed=_safe_int(data.get("seed", 0), 0, 0, MAX_RANDOM_SEED),
+        variation_seed=_safe_int(data.get("variation_seed", 0), 0, 0, MAX_RANDOM_SEED),
+        variation_strength=_safe_int(
+            data.get("variation_strength", DEFAULT_VARIATION_STRENGTH),
+            DEFAULT_VARIATION_STRENGTH,
+            0,
+            3,
+        ),
         style_profile=str(data.get("style_profile", "melodic techno"))[:80],
         root_midi=_safe_int(data.get("root_midi", 60), 60, 0, 127),
         tonality=str(data.get("tonality", "minor"))[:40],
@@ -1370,13 +1381,17 @@ def _compose_arrangement(
     spec: MusicSpec,
     technique_guides: list[dict[str, Any]],
     diversity_level: int,
+    variation_seed: int = 0,
+    variation_strength: int = DEFAULT_VARIATION_STRENGTH,
 ) -> CompositionPlan:
     diversity_level = _normalize_diversity_level(diversity_level)
+    variation_strength = _safe_int(variation_strength, DEFAULT_VARIATION_STRENGTH, 0, 3)
+    effective_variation_seed = _safe_int(variation_seed, 0, 0, MAX_RANDOM_SEED) if variation_strength > 0 else 0
     profile = _profile_name_from_text(
         f"{brief.original_prompt} {brief.enriched_prompt} {brief.style} {spec.mood} {' '.join(spec.instruments)} {' '.join(spec.effects)}"
     )
     seed = _stable_seed(
-        f"{brief.original_prompt}|{brief.enriched_prompt}|{spec.mood}|{spec.key}|{spec.bpm}|{spec.duration}|{spec.loopable}|{diversity_level}",
+        f"{brief.original_prompt}|{brief.enriched_prompt}|{spec.mood}|{spec.key}|{spec.bpm}|{spec.duration}|{spec.loopable}|{diversity_level}|{effective_variation_seed}|{variation_strength}",
         "composer-plan-v4",
     )
     rng = random.Random(seed)
@@ -1427,6 +1442,11 @@ def _compose_arrangement(
                 "accent": round(0.78 + 0.18 * (idx % 2 == 0), 3),
             }
         )
+    if variation_strength >= 2 and profile not in {"ambient"} and bass_pattern:
+        shift = rng.choice([-1, 1, 2])
+        for item in bass_pattern[1::2]:
+            item["step"] = int((int(item["step"]) + shift) % 16)
+        bass_pattern = sorted(bass_pattern, key=lambda item: int(item["step"]))
     if profile == "breakbeat":
         kick_steps = [0, 3, 7, 10, 14]
         snare_steps = [4, 12]
@@ -1442,6 +1462,8 @@ def _compose_arrangement(
             kick_steps += [14]
         snare_steps = [4, 12]
     hat_density = 5 if profile in {"ambient", "lofi"} else 7 + diversity_level
+    if variation_strength >= 3 and profile not in {"ambient"}:
+        hat_density = min(12, hat_density + rng.choice([1, 2]))
     hat_steps = _euclidean_hits(hat_density, 16, offset=1 if profile == "lofi" else 0)
     if profile in {"house", "melodic techno", "acid techno", "trance"}:
         open_hat_steps = [2, 6, 10, 14]
@@ -1453,6 +1475,8 @@ def _compose_arrangement(
     plan = {
         "version": 2,
         "seed": seed,
+        "variation_seed": int(effective_variation_seed),
+        "variation_strength": int(variation_strength),
         "style_profile": profile,
         "root_midi": root_midi,
         "tonality": tonality,
@@ -2341,7 +2365,7 @@ def _event_plain_result(event: AstrMessageEvent, text: str) -> Any:
     "astrbot_plugin_pymusic",
     "Lenovo",
     "Generate structured pure-Python WAV electronic music from prompts and send it to QQ chats.",
-    "v0.4.0",
+    "v0.4.1",
     repo="https://github.com/blueraina/astrbot_plugin_pymusic",
 )
 class PyMusicPlugin(Star):
@@ -2450,12 +2474,23 @@ class PyMusicPlugin(Star):
         spec = await self._build_spec(brief, event, duration, loopable, send_mode)
         if spec.duration > VOICE_MAX_SECONDS and spec.send_mode in {"voice", "auto"}:
             spec.send_mode = "file"
-        technique_guides = _select_technique_guides(brief, spec, self._diversity_level())
-        composer = _compose_arrangement(brief, spec, technique_guides, self._diversity_level())
-        plan = _default_plan(spec, self._diversity_level(), composer)
+        diversity_level = self._diversity_level()
+        variation_strength = self._variation_strength()
+        variation_seed = self._generation_variation_seed(prompt, event)
+        technique_guides = _select_technique_guides(brief, spec, diversity_level)
+        composer = _compose_arrangement(brief, spec, technique_guides, diversity_level, variation_seed, variation_strength)
+        plan = _default_plan(spec, diversity_level, composer)
         wav_path = self.data_dir / f"pymusic_{int(time.time())}_{random.randint(1000, 9999)}.wav"
         sample_rate = self._sample_rate()
-        ai_code = await self._build_python_renderer_code(brief, event, spec, technique_guides, composer)
+        ai_code = await self._build_python_renderer_code(
+            brief,
+            event,
+            spec,
+            technique_guides,
+            composer,
+            variation_seed,
+            variation_strength,
+        )
         if ai_code:
             try:
                 await asyncio.to_thread(self._run_ai_python_renderer, ai_code, wav_path, spec.duration, sample_rate, spec.loopable)
@@ -2463,7 +2498,7 @@ class PyMusicPlugin(Star):
                 logger.warning(f"[pymusic] AI Python renderer failed, using fixed renderer fallback: {exc}")
         if not wav_path.exists() or wav_path.stat().st_size <= 44:
             plan = await self._build_plan(brief, event, spec, composer)
-            await asyncio.to_thread(self.renderer.render, spec, plan, wav_path, sample_rate, self._diversity_level())
+            await asyncio.to_thread(self.renderer.render, spec, plan, wav_path, sample_rate, diversity_level)
         if not wav_path.exists() or wav_path.stat().st_size <= 44:
             raise RuntimeError("WAV 文件没有成功生成")
         return brief, spec, plan, wav_path
@@ -2557,6 +2592,8 @@ class PyMusicPlugin(Star):
         spec: MusicSpec,
         technique_guides: list[dict[str, Any]],
         composer: CompositionPlan | dict[str, Any],
+        variation_seed: int = 0,
+        variation_strength: int = DEFAULT_VARIATION_STRENGTH,
     ) -> str | None:
         provider = self._get_music_provider(event)
         if provider is None:
@@ -2570,6 +2607,8 @@ class PyMusicPlugin(Star):
             "Do not use os, sys, subprocess, pathlib, sockets, network, eval, exec, open, __import__, external samples, or any music-generation API. "
             "Use the provided composition_blueprint / structured_composer_plan as the composition source of truth. Do not invent a single short melody array inside render and loop it unchanged. "
             "Implement the plan's section timeline, chord progression, call motif, response motif, B variation, bass pattern, drum steps, fills, and automation. "
+            "Use variation_seed and variation_strength to create a distinct realization when the same short prompt is requested repeatedly. "
+            "If variation_strength is 0, keep the core melody stable; if it is 1..3, increasingly vary motif contour, response phrase, bass accents, drum fills, section automation, and effects timing while preserving the brief. "
             "Hard musical requirements: derive beat/bar timing from bpm; create drums or rhythmic texture, bass, chords/pad, and melody/lead/texture layers when stylistically appropriate; "
             "strong melody beats should use chord tones and weak beats may use passing notes; bass should leave room for kick and answer it; drums need accents and fills; "
             "A/B phrases must be related but not identical; include a mini build/drop for short clips and clearer sections for longer clips; "
@@ -2601,10 +2640,14 @@ class PyMusicPlugin(Star):
                     for guide in technique_guides
                 ],
                 "music_spec": spec.__dict__,
+                "variation_seed": int(variation_seed),
+                "variation_strength": int(variation_strength),
                 "composition_blueprint": composer_data,
                 "structured_composer_plan": composer_data,
                 "implementation_notes": [
                     "Use composition_blueprint.motifs.call / response / b_variation instead of ad hoc one-array melody loops.",
+                    "Use variation_seed to initialize any local random generator so repeated identical prompts can sound different when variation_strength > 0.",
+                    "Use variation_strength as a musical control, not just a random noise amount: higher values should alter phrase contour, fills, accents, automation and transitions more clearly.",
                     "Use composition_blueprint.chords.progression to target chord tones on steps 0, 4, 8, 12.",
                     "Use composition_blueprint.bass.pattern and drums.kick_steps together so kick and bass breathe.",
                     "Use composition_blueprint.sections to change density, register, drum fill, timbre, and effects.",
@@ -2748,6 +2791,7 @@ with wave.open(str(out_path), "wb") as wf:
             "Do not include markdown. Do not write Python. "
             "Fields: tracks array, drums object, bass object, chords object, melody object, texture object, effects object, master object. "
             "Stay renderer-friendly and preserve the CompositionPlan's theme/answer/B variation, sections, chord-tone targeting, bass-kick relation, and automation. "
+            "Respect CompositionPlan variation_seed and variation_strength: repeated identical prompts should not collapse into the same phrase unless variation_strength is 0. "
             "tracks: role melody/chords/bass/drums/texture, name chip_lead/warm_keys/pluck/pad/bell/acid_bass/sub_drone/warm_bass/lofi_drums/noise_texture, optional gain 0.1..1.5. "
             "drums.pattern: lofi_swing, 8bit_arpeggio_beat, ambient_no_drums, breakbeat, minimal_techno. "
             "bass.pattern: root_octave, warm_roots, acid_bass, sub_drone, syncopated_pulse. "
@@ -2769,6 +2813,8 @@ with wave.open(str(out_path), "wb") as wf:
                 "composition_blueprint": composer_data,
                 "composer_plan": composer_data,
                 "diversity_level": diversity_level,
+                "variation_seed": composer_data.get("variation_seed", 0),
+                "variation_strength": composer_data.get("variation_strength", DEFAULT_VARIATION_STRENGTH),
             }
             response = await self._provider_text_chat(provider, json.dumps(plan_input, ensure_ascii=False), system_prompt)
             data = _extract_json(getattr(response, "completion_text", "") or str(response))
@@ -2829,6 +2875,25 @@ with wave.open(str(out_path), "wb") as wf:
 
     def _diversity_level(self) -> int:
         return _normalize_diversity_level(_cfg_get(self.config, "diversity_level", DEFAULT_DIVERSITY_LEVEL))
+
+    def _deterministic_mode(self) -> bool:
+        return bool(_cfg_get(self.config, "deterministic_mode", False))
+
+    def _variation_strength(self) -> int:
+        return _safe_int(
+            _cfg_get(self.config, "variation_strength", DEFAULT_VARIATION_STRENGTH),
+            DEFAULT_VARIATION_STRENGTH,
+            0,
+            3,
+        )
+
+    def _generation_variation_seed(self, prompt: str, event: AstrMessageEvent) -> int:
+        if self._deterministic_mode() or self._variation_strength() <= 0:
+            return 0
+        origin = str(getattr(event, "unified_msg_origin", "") or "")
+        prompt_seed = _stable_seed(f"{origin}|{prompt}", "variation-context") & MAX_RANDOM_SEED
+        entropy_seed = random.SystemRandom().randrange(1, MAX_RANDOM_SEED)
+        return int((entropy_seed ^ (time.time_ns() & MAX_RANDOM_SEED) ^ prompt_seed) or 1)
 
     def _default_send_mode(self) -> str:
         return _normalize_send_mode(_cfg_get(self.config, "default_send_mode", "auto"), "auto")

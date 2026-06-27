@@ -2,7 +2,7 @@
 
 `astrbot_plugin_pymusic` 是一个 AstrBot 插件，可以根据用户提示词，用纯 Python / NumPy 合成 WAV 音乐，并发送到 QQ 群或私聊。插件不调用外部音乐生成 API，不使用采样包，不引入重型音乐框架；模型仍然只允许输出受限的 `render(duration, sample_rate, loopable)` Python 函数。
 
-v0.4.0 的重点是让生成结果更接近成熟电子乐，而不是简单 loop 或测试音：主路径新增结构化 `CompositionPlan` / `composition_blueprint` 作曲计划，兜底渲染器也会本地生成主题、回答句、A/B 变奏、鼓贝斯配合、段落推进和基础制作处理。
+v0.4.1 的重点是让生成结果更接近成熟电子乐，而不是简单 loop 或测试音：主路径使用结构化 `CompositionPlan` / `composition_blueprint` 作曲计划，兜底渲染器也会本地生成主题、回答句、A/B 变奏、鼓贝斯配合、段落推进和基础制作处理。同一个简短提示词默认会加入新的 `variation_seed`，减少多次生成同一旋律的问题；需要复现时可在 WebUI 开启确定性模式。
 
 ## 功能
 
@@ -17,7 +17,7 @@ v0.4.0 的重点是让生成结果更接近成熟电子乐，而不是简单 loo
 - 支持 `voice`、`file`、`auto` 三种发送模式
 - 语音模式最长 60 秒，超过 60 秒自动改为文件发送
 - 插件硬上限默认 600 秒，可在 WebUI 修改
-- WebUI 支持模型选择、模型调用超时、最大时长、默认时长、多样性强度、波形级无缝循环、默认发送模式、采样率、是否保留历史 WAV
+- WebUI 支持模型选择、模型调用超时、最大时长、默认时长、多样性强度、确定性模式、每次生成变化强度、波形级无缝循环、默认发送模式、采样率、是否保留历史 WAV
 
 ## 支持平台
 
@@ -43,13 +43,14 @@ v0.4.0 的重点是让生成结果更接近成熟电子乐，而不是简单 loo
 
 提示词里包含 `文件` / `file` 会优先按文件发送；包含 `语音` / `voice` 会优先按语音发送；包含 `循环` / `可循环` / `loop` 会启用循环倾向。
 
-## v0.4.0 生成流程
+## v0.4.1 生成流程
 
 ```text
 用户输入
 -> PromptBrief / enriched_prompt
 -> MusicSpec
 -> 选择音乐技法卡片
+-> 生成 variation_seed / variation_strength
 -> 本地 CompositionPlan / composition_blueprint 结构化作曲计划
    - section timeline
    - chord progression
@@ -66,6 +67,8 @@ v0.4.0 的重点是让生成结果更接近成熟电子乐，而不是简单 loo
 ```
 
 和 v0.3.x 相比，AI 不再只拿到风格描述和技法卡片，而是会拿到明确的 `composition_blueprint`，并兼容旧名 `structured_composer_plan`。这个计划包含主题动机、回答句、B 段变奏、和弦进行、鼓组 step、贝斯 pattern、段落能量曲线和制作自动化。代码生成提示会要求模型使用这些结构，而不是在 `render()` 里临时写一个短数组并从头循环到尾。
+
+默认情况下，插件会为每次生成创建新的 `variation_seed`，并把它写入 `composition_blueprint` 以及 AI Python 渲染提示。这样 `/pymusic 30 lofi 咖啡馆 放松` 这类短提示词多次生成时，会保留同一风格意图，但主题轮廓、回答句、贝斯重音、鼓 fill、自动化和效果时机可以变化。若开启 `deterministic_mode` 或把 `variation_strength` 设为 0，同提示词会尽量回到稳定可复现的结果。
 
 ## 音乐质量改造点
 
@@ -127,7 +130,7 @@ def render(duration, sample_rate, loopable):
 - 禁止外部采样和外部音乐生成 API。
 - 生成代码会先做 AST 校验，再写入临时代码文件，由独立 Python 子进程加载并渲染 WAV。
 
-v0.4.0 的代码生成提示会明确要求 AI 使用 `composition_blueprint` / `structured_composer_plan`，并实现：
+v0.4.1 的代码生成提示会明确要求 AI 使用 `composition_blueprint` / `structured_composer_plan`，并实现：
 
 - section timeline
 - chord progression
@@ -189,6 +192,8 @@ v0.4.0 的代码生成提示会明确要求 AI 使用 `composition_blueprint` / 
 - `model_call_timeout_sec`：模型规划单步超时，默认 12 秒；低于 1 秒会按 1 秒处理
 - `waveform_loopable`：是否启用波形级无缝循环，默认开启
 - `diversity_level`：多样性强度，0=稳定，1=均衡，2=大胆
+- `deterministic_mode`：固定同提示词结果，默认关闭；开启后同提示词和同参数尽量复现
+- `variation_strength`：每次生成变化强度，0=固定核心旋律，1=轻微变化，2=明显变化，3=更大胆变化
 - `default_send_mode`：默认发送模式，默认 `auto`
 - `sample_rate`：输出采样率，默认 44100
 - `keep_history_wav`：是否保留历史 WAV，默认关闭
@@ -223,5 +228,5 @@ https://github.com/blueraina/astrbot_plugin_pymusic
 
 - 插件不会调用外部音乐生成服务。
 - AI 代码沙箱仍然只开放 `numpy`、`math`、`random`。
-- v0.4.0 增加的是本地结构化作曲计划和更强的兜底渲染，不会让 AI 获得任意 Python 执行能力。
+- v0.4.1 使用的是本地结构化作曲计划、变化种子和更强的兜底渲染，不会让 AI 获得任意 Python 执行能力。
 - 如果模型不可用、JSON 格式异常或生成代码失败，插件会使用固定渲染器生成兜底音乐。

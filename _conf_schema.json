@@ -40,6 +40,19 @@
     "hint": "0=稳定，1=均衡，2=大胆；越高越容易使用 B 段变化、过门、call-response 和更跳脱的旋律/鼓组",
     "slider": {"min": 0, "max": 2, "step": 1}
   },
+  "deterministic_mode": {
+    "type": "bool",
+    "description": "固定同提示词结果",
+    "default": false,
+    "hint": "关闭时每次生成都会加入新的 variation_seed；开启后同提示词和同参数会尽量复现同一套旋律"
+  },
+  "variation_strength": {
+    "type": "int",
+    "description": "每次生成变化强度",
+    "default": 1,
+    "hint": "0=核心旋律尽量固定，1=轻微变化，2=明显变化，3=更大胆变化；确定性模式开启时会被弱化",
+    "slider": {"min": 0, "max": 3, "step": 1}
+  },
   "default_send_mode": {
     "type": "string",
     "description": "默认发送模式",
