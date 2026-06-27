@@ -2372,7 +2372,7 @@ def _event_plain_result(event: AstrMessageEvent, text: str) -> Any:
     "astrbot_plugin_pymusic",
     "Lenovo",
     "Generate structured pure-Python WAV electronic music from prompts and send it to QQ chats.",
-    "v0.4.1",
+    "v0.4.2",
     repo="https://github.com/blueraina/astrbot_plugin_pymusic",
 )
 class PyMusicPlugin(Star):
@@ -2502,7 +2502,33 @@ class PyMusicPlugin(Star):
             try:
                 await asyncio.to_thread(self._run_ai_python_renderer, ai_code, wav_path, spec.duration, sample_rate, spec.loopable)
             except Exception as exc:
-                logger.warning(f"[pymusic] AI Python renderer failed, using fixed renderer fallback: {exc}")
+                render_error = _format_exception(exc)
+                logger.warning(f"[pymusic] AI Python renderer failed, trying one repair: {render_error}")
+                wav_path.unlink(missing_ok=True)
+                repaired_code = await self._repair_python_renderer_code(
+                    brief,
+                    event,
+                    spec,
+                    technique_guides,
+                    composer,
+                    ai_code,
+                    render_error,
+                )
+                if repaired_code:
+                    try:
+                        await asyncio.to_thread(
+                            self._run_ai_python_renderer,
+                            repaired_code,
+                            wav_path,
+                            spec.duration,
+                            sample_rate,
+                            spec.loopable,
+                        )
+                    except Exception as retry_exc:
+                        logger.warning(
+                            f"[pymusic] repaired AI Python renderer failed, using fixed renderer fallback: {_format_exception(retry_exc)}"
+                        )
+                        wav_path.unlink(missing_ok=True)
         if not wav_path.exists() or wav_path.stat().st_size <= 44:
             plan = await self._build_plan(brief, event, spec, composer)
             await asyncio.to_thread(self.renderer.render, spec, plan, wav_path, sample_rate, diversity_level)
@@ -2614,6 +2640,8 @@ class PyMusicPlugin(Star):
             "Never import, reference, or use the identifier name wave; the host plugin writes the returned audio array to a WAV file after render() finishes. "
             "Do not call wave.open or any file-writing API. Use variable names like audio, signal, osc, layer, or buffer instead of wave. "
             "Do not use os, sys, subprocess, pathlib, sockets, network, eval, exec, open, __import__, external samples, or any music-generation API. "
+            "Every note/sample/layer insertion must be bounds-checked and clipped to the target array before adding. "
+            "If a start index is outside the target, skip it; if it is negative, crop the source; always compute end = min(len(target), start + len(source)) and return when end <= start. "
             "Use the provided composition_blueprint / structured_composer_plan as the composition source of truth. Do not invent a single short melody array inside render and loop it unchanged. "
             "Implement the plan's section timeline, chord progression, call motif, response motif, B variation, bass pattern, drum steps, fills, and automation. "
             "Use variation_seed and variation_strength to create a distinct realization when the same short prompt is requested repeatedly. "
@@ -2656,6 +2684,8 @@ class PyMusicPlugin(Star):
                 "implementation_notes": [
                     "Do not import or reference wave. render() must only return a numpy audio array; the host plugin handles WAV encoding and file writing.",
                     "Avoid using wave as a variable name because it is reserved by the sandbox validator; use audio, signal, osc, layer, or buffer.",
+                    "All helper functions that add notes, drum hits, delay taps, samples, or layers into an output array must clip indices to array bounds before addition.",
+                    "A safe insertion helper should skip idx >= len(target), crop negative idx, use end_idx = min(len(target), idx + len(source)), and return if end_idx <= idx.",
                     "Use composition_blueprint.motifs.call / response / b_variation instead of ad hoc one-array melody loops.",
                     "Use variation_seed to initialize any local random generator so repeated identical prompts can sound different when variation_strength > 0.",
                     "Use variation_strength as a musical control, not just a random noise amount: higher values should alter phrase contour, fills, accents, automation and transitions more clearly.",
@@ -2674,6 +2704,61 @@ class PyMusicPlugin(Star):
             return code
         except Exception as exc:
             logger.warning(f"[pymusic] AI Python code generation failed, using fixed renderer fallback: {_format_exception(exc)}")
+            return None
+
+    async def _repair_python_renderer_code(
+        self,
+        brief: PromptBrief,
+        event: AstrMessageEvent,
+        spec: MusicSpec,
+        technique_guides: list[dict[str, Any]],
+        composer: CompositionPlan | dict[str, Any],
+        broken_code: str,
+        error_detail: str,
+    ) -> str | None:
+        provider = self._get_music_provider(event)
+        if provider is None:
+            return None
+        composer_data = _composer_to_dict(composer)
+        system_prompt = (
+            "You repair sandboxed pure Python DSP renderer code. Return the complete corrected Python code only, no markdown, no explanation. "
+            "The corrected code must define render(duration, sample_rate, loopable) and return a one-dimensional numpy float audio array in -1..1. "
+            "Allowed imports: numpy as np, math, random. Do not read or write files. "
+            "Never import, reference, or use the identifier name wave; the host plugin writes the returned array to WAV. "
+            "Do not use os, sys, subprocess, pathlib, sockets, network, eval, exec, open, __import__, external samples, or any music-generation API. "
+            "Fix the reported runtime error while preserving the musical intent and composition_blueprint. "
+            "Critical array safety rule: every helper that inserts notes, drum hits, delay taps, samples, or layers into an output array must clip indices before adding. "
+            "Use a safe pattern: start = int(start); if start >= len(target): return; if start < 0 crop source and set start=0; "
+            "end = min(len(target), start + len(source)); if end <= start: return; target[start:end] += source[:end-start]. "
+            "Avoid numpy broadcasting errors from empty target slices, negative indices, or events scheduled past the end of the clip."
+        )
+        user_prompt = json.dumps(
+            {
+                "runtime_error": error_detail[-4000:],
+                "original_prompt": brief.original_prompt,
+                "enriched_prompt": brief.enriched_prompt,
+                "music_spec": spec.__dict__,
+                "composition_blueprint": composer_data,
+                "selected_technique_ids": [guide["id"] for guide in technique_guides],
+                "broken_code": broken_code[-32000:],
+                "repair_checklist": [
+                    "Return full corrected code, not a diff.",
+                    "Keep render(duration, sample_rate, loopable).",
+                    "Do not import or reference wave.",
+                    "Bounds-check every array insertion before target[start:end] += source.",
+                    "Skip events with start index outside the audio length.",
+                    "Clamp/crop all delayed echoes, drum hits, fills, tails, and section-transition FX near the end of the clip.",
+                ],
+            },
+            ensure_ascii=False,
+        )
+        try:
+            response = await self._provider_text_chat(provider, user_prompt, system_prompt)
+            code = _extract_python_code(getattr(response, "completion_text", "") or str(response))
+            _validate_generated_python(code)
+            return code
+        except Exception as exc:
+            logger.warning(f"[pymusic] AI Python repair failed, using fixed renderer fallback: {_format_exception(exc)}")
             return None
 
     def _run_ai_python_renderer(self, code: str, wav_path: Path, duration: int, sample_rate: int, loopable: bool) -> None:

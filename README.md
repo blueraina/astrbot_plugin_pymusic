@@ -2,7 +2,7 @@
 
 `astrbot_plugin_pymusic` 是一个 AstrBot 插件，可以根据用户提示词，用纯 Python / NumPy 合成 WAV 音乐，并发送到 QQ 群或私聊。插件不调用外部音乐生成 API，不使用采样包，不引入重型音乐框架；模型仍然只允许输出受限的 `render(duration, sample_rate, loopable)` Python 函数。
 
-v0.4.1 的重点是让生成结果更接近成熟电子乐，而不是简单 loop 或测试音：主路径使用结构化 `CompositionPlan` / `composition_blueprint` 作曲计划，兜底渲染器也会本地生成主题、回答句、A/B 变奏、鼓贝斯配合、段落推进和基础制作处理。同一个简短提示词默认会加入新的 `variation_seed`，减少多次生成同一旋律的问题；需要复现时可在 WebUI 开启确定性模式。
+v0.4.2 的重点是让生成结果更接近成熟电子乐，而不是简单 loop 或测试音：主路径使用结构化 `CompositionPlan` / `composition_blueprint` 作曲计划，兜底渲染器也会本地生成主题、回答句、A/B 变奏、鼓贝斯配合、段落推进和基础制作处理。同一个简短提示词默认会加入新的 `variation_seed`，减少多次生成同一旋律的问题；需要复现时可在 WebUI 开启确定性模式。AI Python 渲染器运行失败时会自动尝试修复一次，仍失败才切换到固定渲染器兜底。
 
 ## 功能
 
@@ -43,7 +43,7 @@ v0.4.1 的重点是让生成结果更接近成熟电子乐，而不是简单 loo
 
 提示词里包含 `文件` / `file` 会优先按文件发送；包含 `语音` / `voice` 会优先按语音发送；包含 `循环` / `可循环` / `loop` 会启用循环倾向。
 
-## v0.4.1 生成流程
+## v0.4.2 生成流程
 
 ```text
 用户输入
@@ -62,6 +62,7 @@ v0.4.1 的重点是让生成结果更接近成熟电子乐，而不是简单 loo
 -> AI 生成受限 Python render(duration, sample_rate, loopable)
 -> AST 校验
 -> 子进程沙箱执行并渲染 WAV
+-> 运行失败时把错误回传给模型修复一次
 -> 失败时回退到固定 PythonMusicRenderer
 -> QQ 发送
 ```
@@ -130,7 +131,7 @@ def render(duration, sample_rate, loopable):
 - 禁止外部采样和外部音乐生成 API。
 - 生成代码会先做 AST 校验，再写入临时代码文件，由独立 Python 子进程加载并渲染 WAV。
 
-v0.4.1 的代码生成提示会明确要求 AI 使用 `composition_blueprint` / `structured_composer_plan`，并实现：
+v0.4.2 的代码生成提示会明确要求 AI 使用 `composition_blueprint` / `structured_composer_plan`，并实现：
 
 - section timeline
 - chord progression
@@ -142,6 +143,7 @@ v0.4.1 的代码生成提示会明确要求 AI 使用 `composition_blueprint` / 
 - filter sweep 或 harmonic brightness motion
 - riser/downlifter 或 phrase fill
 - delay/reverb/soft saturation
+- 所有 note/sample/layer 写入都做数组边界裁剪，避免结尾鼓点或 delay tail 越界
 
 ## 兜底渲染器
 
@@ -228,5 +230,5 @@ https://github.com/blueraina/astrbot_plugin_pymusic
 
 - 插件不会调用外部音乐生成服务。
 - AI 代码沙箱仍然只开放 `numpy`、`math`、`random`。
-- v0.4.1 使用的是本地结构化作曲计划、变化种子和更强的兜底渲染，不会让 AI 获得任意 Python 执行能力。
+- v0.4.2 使用的是本地结构化作曲计划、变化种子、AI 代码修复和更强的兜底渲染，不会让 AI 获得任意 Python 执行能力。
 - 如果模型不可用、JSON 格式异常或生成代码失败，插件会使用固定渲染器生成兜底音乐。
