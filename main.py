@@ -33,6 +33,8 @@ DEFAULT_DURATION = 20
 DEFAULT_SAMPLE_RATE = 44100
 DEFAULT_DIVERSITY_LEVEL = 1
 DEFAULT_MODEL_CALL_TIMEOUT_SECONDS = 12
+DEFAULT_CODE_CALL_TIMEOUT_SECONDS = 120
+MAX_RENDER_REPAIRS = 2
 DEFAULT_VARIATION_STRENGTH = 1
 MAX_RANDOM_SEED = 2**32 - 1
 VOICE_SEND_TIMEOUT_SECONDS = 8
@@ -1013,7 +1015,6 @@ def _validate_generated_python(source: str) -> None:
         "requests",
         "httpx",
         "urllib",
-        "wave",
         "builtins",
     }
     blocked_attrs = {
@@ -1053,7 +1054,12 @@ def _validate_generated_python(source: str) -> None:
             if node.level != 0 or root not in allowed_imports or parts & blocked_attrs or alias_parts & blocked_attrs:
                 raise ValueError(f"disallowed import: {node.module}")
         elif isinstance(node, ast.ClassDef):
-            raise ValueError("classes are not allowed in generated renderer code")
+            # Plain helper classes (envelopes, voices, small oscillator objects) are harmless inside the
+            # builtins/import sandbox and models frequently structure renderers with them. Only reject a
+            # class that declares explicit base classes (which could subclass something reachable/dangerous);
+            # bare `class Foo:` is fine.
+            if node.bases or node.keywords:
+                raise ValueError("generated renderer classes must not declare base classes")
         elif isinstance(node, ast.FunctionDef):
             if node.name == "render":
                 has_render = True
@@ -1258,19 +1264,38 @@ def _root_midi_and_scale(key: str) -> tuple[int, list[int], str]:
     return root, MINOR_SCALE, "minor"
 
 
-def _chord_progression_for(spec: MusicSpec, profile: str) -> tuple[str, list[list[int]]]:
+def _chord_progression_for(spec: MusicSpec, profile: str, rng: random.Random | None = None) -> tuple[str, list[list[int]]]:
     text = f"{spec.key} {profile} {spec.mood} {' '.join(spec.instruments)}".lower()
-    if "major" in text and "lofi" not in text:
-        if profile in {"house", "synthwave"}:
-            return "I-V-vi-IV", [[0, 2, 4], [4, 6, 1], [5, 0, 2], [3, 5, 0]]
-        return "I-vi-IV-V", [[0, 2, 4], [5, 0, 2], [3, 5, 0], [4, 6, 1]]
-    if profile in {"lofi", "synthwave"}:
-        return "i-VI-iv-V", [[0, 2, 4, 6], [5, 0, 2, 4], [3, 5, 0, 2], [4, 6, 1, 3]]
-    if profile in {"ambient", "ambient techno"}:
-        return "i-VI-iv-v", [[0, 2, 4], [5, 0, 2], [3, 5, 0], [4, 6, 1]]
-    if profile in {"trance", "melodic techno", "acid techno"}:
-        return "i-VI-III-VII", [[0, 2, 4], [5, 0, 2], [2, 4, 6], [6, 1, 3]]
-    return "i-VI-III-VII", [[0, 2, 4], [5, 0, 2], [2, 4, 6], [6, 1, 3]]
+    is_major = "major" in text and "lofi" not in text
+    # Pools per tonal context. rng picks one per render so the harmonic backdrop (and therefore the
+    # melody's chord-tone targets) varies between regenerations instead of always collapsing to one prog.
+    if is_major:
+        pool = [
+            ("I-V-vi-IV", [[0, 2, 4], [4, 6, 1], [5, 0, 2], [3, 5, 0]]),
+            ("I-vi-IV-V", [[0, 2, 4], [5, 0, 2], [3, 5, 0], [4, 6, 1]]),
+            ("I-IV-V-IV", [[0, 2, 4], [3, 5, 0], [4, 6, 1], [3, 5, 0]]),
+            ("vi-IV-I-V", [[5, 0, 2], [3, 5, 0], [0, 2, 4], [4, 6, 1]]),
+        ]
+    elif profile in {"lofi", "synthwave"}:
+        pool = [
+            ("i-VI-iv-V", [[0, 2, 4, 6], [5, 0, 2, 4], [3, 5, 0, 2], [4, 6, 1, 3]]),
+            ("i-iv-VII-III", [[0, 2, 4, 6], [3, 5, 0, 2], [6, 1, 3, 5], [2, 4, 6, 1]]),
+            ("i-VII-VI-VII", [[0, 2, 4, 6], [6, 1, 3, 5], [5, 0, 2, 4], [6, 1, 3, 5]]),
+        ]
+    elif profile in {"ambient", "ambient techno"}:
+        pool = [
+            ("i-VI-iv-v", [[0, 2, 4], [5, 0, 2], [3, 5, 0], [4, 6, 1]]),
+            ("i-iv-i-VII", [[0, 2, 4], [3, 5, 0], [0, 2, 4], [6, 1, 3]]),
+            ("i-VI-III-iv", [[0, 2, 4], [5, 0, 2], [2, 4, 6], [3, 5, 0]]),
+        ]
+    else:  # trance / melodic techno / acid / general minor
+        pool = [
+            ("i-VI-III-VII", [[0, 2, 4], [5, 0, 2], [2, 4, 6], [6, 1, 3]]),
+            ("i-VII-VI-VII", [[0, 2, 4], [6, 1, 3], [5, 0, 2], [6, 1, 3]]),
+            ("i-iv-VII-III", [[0, 2, 4], [3, 5, 0], [6, 1, 3], [2, 4, 6]]),
+            ("i-v-VI-iv", [[0, 2, 4], [4, 6, 1], [5, 0, 2], [3, 5, 0]]),
+        ]
+    return rng.choice(pool) if rng is not None else pool[0]
 
 
 def _allocate_section_bars(total_bars: int, section_defs: list[tuple[str, float, str, float]], loopable: bool) -> list[dict[str, Any]]:
@@ -1397,18 +1422,28 @@ def _musicpy_melody_score(
         if float(event.get("length_steps", 2)) >= 3:
             score += 0.4
     intervals = [degrees[i + 1] - degrees[i] for i in range(len(degrees) - 1)]
+    leaps = 0
     for idx, interval in enumerate(intervals):
         distance = abs(interval)
         if distance == 0:
-            score -= 0.35
+            score -= 0.25
         elif distance <= 2:
             score += 1.1
         elif distance <= 4:
-            score += 0.25
+            score += 0.4
         else:
-            score -= 2.6
+            # A leap is fine if it resolves by step in the opposite direction; only penalize lightly
+            # otherwise. The old -2.6 pushed the search toward flat, stepwise, boring lines.
+            leaps += 1
             if idx + 1 < len(intervals) and intervals[idx + 1] * interval < 0 and abs(intervals[idx + 1]) <= 2:
-                score += 2.2
+                score += 1.6  # resolved leap = expressive, reward it
+            else:
+                score -= 1.0
+    # Reward at least one expressive leap per phrase (variety), discourage leap spam.
+    if leaps == 1:
+        score += 1.2
+    elif leaps >= 4:
+        score -= 1.0
     final_degree = int(motif[-1].get("degree", 0))
     score += 4.0 if final_degree in strong else -1.5
     if final_degree == 0:
@@ -1446,14 +1481,13 @@ def _musicpy_generate_motif(
         # musicpy unavailable: let the caller fall back to the pure-Python motif generator.
         return [], 0.0
     scale_len = max(1, len(scale))
+    # Pick a rhythm grid at random (seeded rng) so repeated prompts get different onset patterns.
+    steps = rng.choice(_rhythm_grids(profile))
     if profile in {"8bit", "trance"}:
-        steps = [0, 2, 4, 6, 8, 10, 12, 14]
         length_bank = [1, 2, 2, 1, 2, 2, 1, 2]
     elif profile in {"lofi", "ambient"}:
-        steps = [0, 3, 6, 8, 11, 14]
         length_bank = [3, 2, 2, 3, 2, 2]
     else:
-        steps = [0, 2, 5, 7, 8, 10, 13, 14]
         length_bank = [2, 2, 1, 1, 2, 2, 1, 2]
     chord_degrees = [int(x) % scale_len for x in (chord_progression[0].get("scale_degrees", [0, 2, 4]) if chord_progression else [0, 2, 4])]
     candidate_count = 12 + diversity * 8
@@ -1505,36 +1539,85 @@ def _musicpy_generate_motif(
     return best, round(float(best_score), 3)
 
 
-def _make_motif(rng: random.Random, scale_len: int, diversity: int, profile: str) -> list[dict[str, Any]]:
+def _rhythm_grids(profile: str) -> list[list[int]]:
+    """Candidate onset grids (16th positions) per profile. Picking one per render gives rhythmic variety
+    instead of the same fixed onset pattern every time. Offbeat steps (1/3/9/11) add syncopation."""
     if profile in {"8bit", "trance"}:
-        steps = [0, 2, 4, 6, 8, 10, 12, 14]
-        lengths = [2, 2, 2, 2, 2, 2, 2, 2]
-    elif profile in {"lofi", "ambient"}:
-        steps = [0, 3, 6, 8, 11, 14]
-        lengths = [3, 2, 2, 3, 2, 2]
-    else:
-        steps = [0, 2, 5, 7, 8, 10, 13, 14]
-        lengths = [2, 2, 1, 1, 2, 2, 1, 2]
-    contour = [0, 2, 4, 3, 2, 5, 4, 1]
-    if diversity >= 1:
-        contour = [degree + rng.choice([-1, 0, 0, 1]) for degree in contour]
+        return [
+            [0, 2, 4, 6, 8, 10, 12, 14],
+            [0, 2, 3, 6, 8, 10, 11, 14],
+            [0, 2, 4, 7, 8, 10, 12, 15],
+            [0, 1, 4, 6, 8, 9, 12, 14],
+        ]
+    if profile in {"lofi", "ambient"}:
+        return [
+            [0, 3, 6, 8, 11, 14],
+            [0, 2, 6, 9, 12, 14],
+            [0, 4, 6, 10, 13],
+            [0, 3, 7, 8, 11, 15],
+        ]
+    return [
+        [0, 2, 5, 7, 8, 10, 13, 14],
+        [0, 3, 5, 6, 8, 11, 13, 15],
+        [0, 2, 4, 7, 9, 10, 12, 14],
+        [0, 1, 4, 6, 8, 11, 12, 15],
+    ]
+
+
+def _make_motif(rng: random.Random, scale_len: int, diversity: int, profile: str) -> list[dict[str, Any]]:
+    """Pure-Python motif generator (no-musicpy fallback path).
+
+    Builds a melody as a bounded random walk anchored to chord tones on strong beats, with occasional
+    resolved leaps, rests, varied note lengths and velocity dynamics. The rhythm grid is chosen at random
+    so repeated renders of the same prompt differ; all randomness flows from the passed rng (which now
+    carries the variation seed), keeping deterministic mode reproducible.
+    """
+    grids = _rhythm_grids(profile)
+    steps = rng.choice(grids)
+    length_bank = [3, 2, 2, 1] if profile in {"lofi", "ambient"} else [2, 2, 1, 1, 2]
+    strong_degrees = [0, 2, 4, 6]
+    rest_prob = 0.0 if diversity == 0 else (0.12 if diversity == 1 else 0.2)
     motif: list[dict[str, Any]] = []
+    current = rng.choice(strong_degrees)
+    pending_leap = 0
     for i, step in enumerate(steps):
         strong = step % 8 in {0, 4}
-        degree = contour[i % len(contour)] % scale_len
+        # Occasionally rest on a weak step for phrasing (never on the first/strong downbeat).
+        if not strong and i > 0 and rng.random() < rest_prob:
+            continue
         if strong:
-            degree = [0, 2, 4, 6][i % 4] % scale_len
+            degree = rng.choice(strong_degrees) % scale_len
+        elif pending_leap:
+            # Resolve a prior leap by stepping back in the opposite direction.
+            degree = (current - int(math.copysign(rng.choice([1, 2]), pending_leap))) % scale_len
+        elif rng.random() < (0.25 + 0.12 * diversity):
+            # Expressive leap (will be resolved next note).
+            leap = rng.choice([-4, -3, 3, 4])
+            degree = (current + leap) % scale_len
+            pending_leap = leap
+        else:
+            degree = (current + rng.choice([-2, -1, 1, 2])) % scale_len
+        if not (strong or pending_leap):
+            pending_leap = 0
+        elif strong:
+            pending_leap = 0
+        current = degree
         octave = 1 if i >= len(steps) // 2 and profile not in {"ambient", "lofi"} else 0
+        if diversity >= 2 and rng.random() < 0.2:
+            octave += rng.choice([-1, 1])
+        length = int(length_bank[rng.randrange(len(length_bank))]) if diversity >= 1 else int(length_bank[i % len(length_bank)])
         motif.append(
             {
                 "step": int(step),
                 "degree": int(degree),
                 "octave": int(octave),
-                "length_steps": int(lengths[i % len(lengths)]),
-                "velocity": round(0.72 + 0.18 * (1 if strong else rng.random()), 3),
+                "length_steps": int(max(1, length)),
+                "velocity": round(0.62 + 0.16 * (i / max(1, len(steps) - 1)) + 0.14 * (1 if strong else rng.random()), 3),
                 "strong_chord_tone": bool(strong),
             }
         )
+    if not motif:  # all weak steps rested out (degenerate); guarantee at least the downbeat
+        motif.append({"step": 0, "degree": int(rng.choice(strong_degrees) % scale_len), "octave": 0, "length_steps": 2, "velocity": 0.8, "strong_chord_tone": True})
     return motif
 
 
@@ -1659,7 +1742,7 @@ def _compose_arrangement(
     if spec.loopable:
         phrase = 4 if total_bars < 12 else 8
         total_bars = max(phrase, int(math.ceil(total_bars / phrase)) * phrase)
-    progression_name, progression_degrees = _chord_progression_for(spec, profile)
+    progression_name, progression_degrees = _chord_progression_for(spec, profile, rng)
     chord_progression = []
     for i, degrees in enumerate(progression_degrees):
         chord_progression.append(
@@ -2041,14 +2124,27 @@ def _add_note(
         # Clean sub bass: mostly sine with a touch of 2nd harmonic, NO tanh distortion.
         wave_data = (0.85 * np.sin(2 * np.pi * freq * t) + 0.15 * np.sin(2 * np.pi * freq * 2.0 * t)).astype(np.float32)
         env = _adsr(length, sr, 0.008, 0.06, 0.80, 0.080)
-    elif "pad" in synth or "drone" in synth:
-        detune = 0.003 + 0.003 * brightness
+    elif "sub" in synth or ("bass" in synth and "warm" not in synth):
+        # Clean sub bass with sub-octave reinforcement so the low end has weight on small speakers,
+        # plus gentle saturation to imply the fundamental via harmonics. No harsh tanh on the body.
         wave_data = (
-            0.48 * np.sin(2 * np.pi * freq * t)
-            + 0.28 * np.sin(2 * np.pi * freq * (1.0 + detune) * t + 0.4)
-            + 0.18 * np.sin(2 * np.pi * freq * 2.0 * t + 1.1)
-            + 0.10 * np.sin(2 * np.pi * freq * 3.0 * t + 2.0)
+            0.62 * np.sin(2 * np.pi * freq * t)
+            + 0.30 * np.sin(2 * np.pi * freq * 0.5 * t)  # sub-octave for body
+            + 0.14 * np.sin(2 * np.pi * freq * 2.0 * t)
         ).astype(np.float32)
+        wave_data = np.tanh(wave_data * 1.2).astype(np.float32)  # light per-layer drive
+        env = _adsr(length, sr, 0.008, 0.06, 0.80, 0.080)
+    elif "pad" in synth or "drone" in synth:
+        # Lush detuned ensemble: 7 sine partials over two octaves with random phase, then a slow
+        # resonant lowpass for warmth instead of a thin 4-partial stack.
+        def _pad_osc(f: float, tt: np.ndarray, s: int) -> np.ndarray:
+            return (
+                0.5 * np.sin(2 * np.pi * f * tt)
+                + 0.3 * np.sin(2 * np.pi * f * 2.0 * tt + 1.1)
+                + 0.18 * np.sin(2 * np.pi * f * 3.0 * tt + 2.0)
+            ).astype(np.float32)
+        wave_data = _unison(_pad_osc, freq, t, sr, voices=7, detune_cents=10.0 + 6.0 * brightness, rng=rng)
+        wave_data = _resonant_lowpass(wave_data, sr, cutoff_hz=600.0 + 5000.0 * brightness, q=0.8)
         env = _adsr(length, sr, min(0.8, dur_sec * 0.35), 0.2, 0.82, min(1.0, dur_sec * 0.35))
     elif "bell" in synth or "fm" in synth:
         mod_env = np.exp(-t * 5.0).astype(np.float32)
@@ -2059,7 +2155,13 @@ def _add_note(
         wave_data = (0.70 * np.sin(2 * np.pi * freq * t) + 0.20 * _triangle(freq * 2.0, t, sr) + 0.10 * _bandlimited_square(freq, t, sr, 7)).astype(np.float32)
         env = _adsr(length, sr, 0.008, 0.12, 0.35, 0.18)
     else:
-        wave_data = (0.55 * _bandlimited_saw(freq, t, sr, brightness) + 0.35 * np.sin(2 * np.pi * freq * t).astype(np.float32) + 0.10 * _triangle(freq, t, sr)).astype(np.float32)
+        # Fat detuned saw/sine lead: 5-voice unison ensemble + a velocity-tracking resonant lowpass so
+        # dynamics change timbre, not just level. This is the main 'cheap vs rich' difference for leads.
+        def _lead_osc(f: float, tt: np.ndarray, s: int) -> np.ndarray:
+            return (0.6 * _bandlimited_saw(f, tt, s, brightness) + 0.4 * np.sin(2 * np.pi * f * tt)).astype(np.float32)
+        wave_data = _unison(_lead_osc, freq, t, sr, voices=5, detune_cents=8.0 + 7.0 * brightness, rng=rng)
+        cutoff = freq * (2.5 + 6.0 * brightness) * (0.6 + 0.6 * _clamp(velocity, 0.0, 1.0))
+        wave_data = _resonant_lowpass(wave_data, sr, cutoff_hz=cutoff, q=1.4)
         env = _adsr(length, sr, 0.010, 0.08, 0.55, 0.10)
     # Tiny deterministic imperfection for lofi/warm tones, never enough to detune out of key.
     if "warm" in synth or "lofi" in synth:
@@ -2317,21 +2419,178 @@ def _make_loopable(audio: np.ndarray, sr: int) -> np.ndarray:
     return audio
 
 
-def _write_wav(path: Path, audio: np.ndarray, sample_rate: int, target_peak: float = 0.92, already_mastered: bool = False) -> None:
+def _resonant_lowpass(audio: np.ndarray, sr: int, cutoff_hz: float, q: float = 0.9) -> np.ndarray:
+    """Vectorised one-pole/2-pole-ish resonant lowpass (Chamberlin state-variable approximation).
+
+    Gives the warmth and 'body' a pure additive harmonic sum lacks. cutoff_hz is the corner frequency,
+    q (~0.5-4) controls resonance. Runs as a per-sample recursion in float32; cheap enough for single notes.
+    """
     audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+    n = len(audio)
+    if n == 0:
+        return audio
+    cutoff_hz = float(max(40.0, min(cutoff_hz, sr * 0.45)))
+    f = 2.0 * math.sin(math.pi * cutoff_hz / float(sr))
+    f = max(1e-4, min(f, 1.0))
+    damp = max(0.05, min(2.0, 1.0 / max(0.5, q)))
+    low = 0.0
+    band = 0.0
+    out = np.empty(n, dtype=np.float32)
+    x = audio.astype(np.float64)
+    for i in range(n):
+        low = low + f * band
+        high = x[i] - low - damp * band
+        band = band + f * high
+        out[i] = low
+    return out.astype(np.float32)
+
+
+def _unison(osc_fn, freq: float, t: np.ndarray, sr: int, voices: int = 5, detune_cents: float = 12.0, rng: np.random.Generator | None = None) -> np.ndarray:
+    """Stack `voices` slightly detuned copies of osc_fn(freq, t, sr) to get a fat, beating ensemble tone.
+
+    osc_fn(freq, t, sr) -> np.ndarray. Detune is symmetric in cents; each voice gets a small random phase
+    offset so they don't phase-lock into a thin comb. Normalised by sqrt(voices) to keep level stable.
+    """
+    voices = int(max(1, voices))
+    if voices == 1:
+        return osc_fn(freq, t, sr)
+    out = np.zeros_like(t, dtype=np.float32)
+    spread = np.linspace(-detune_cents, detune_cents, voices)
+    for cents in spread:
+        ratio = 2.0 ** (float(cents) / 1200.0)
+        phase = float(rng.random()) * 2.0 * math.pi if rng is not None else 0.0
+        voice = osc_fn(freq * ratio, t, sr)
+        if phase:
+            # cheap phase decorrelation: roll by a few samples
+            shift = int((phase / (2.0 * math.pi)) * max(1, sr // int(max(freq, 1.0))))
+            if shift:
+                voice = np.roll(voice, shift)
+        out += voice.astype(np.float32)
+    return (out / math.sqrt(voices)).astype(np.float32)
+
+
+def _pseudo_stereo(audio: np.ndarray, sr: int, width: float = 0.6) -> np.ndarray:
+    """Turn a mono master into a wider stereo (2, n) signal without samples, staying mono-compatible.
+
+    Mid/side construction: L = mid + side, R = mid - side, so (L+R)/2 == mid exactly — summing to mono
+    (QQ voice on a single phone speaker) fully recovers the original with no comb cancellation. The side
+    signal is a band-limited, decorrelated version of the mid (high-passed difference of dry vs a short
+    delay), scaled by `width`. Width is capped so the channels stay positively correlated (no hollow
+    out-of-phase feel). Returns shape (2, n).
+    """
+    audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+    n = len(audio)
+    if n == 0:
+        return np.zeros((2, 1), dtype=np.float32)
+    width = float(max(0.0, min(1.0, width)))
+    mid = audio
+    # Short delay only to build a decorrelated SIDE source; it is never used as a channel base, so it
+    # cannot comb-cancel on mono fold-down.
+    haas = max(1, int(0.006 * sr))  # ~6 ms, gentle
+    delayed = np.empty(n, dtype=np.float32)
+    delayed[:haas] = audio[:haas]
+    delayed[haas:] = audio[:-haas]
+    side = _fft_filter(audio - delayed, sr, "high", 500.0, width_hz=200.0)
+    # Cap side level relative to mid so L/R stay positively correlated (mono-safe). 0.45 keeps
+    # correlation comfortably positive even at width=1.
+    side_gain = 0.45 * width
+    s_peak = float(np.max(np.abs(side))) if side.size else 0.0
+    m_peak = float(np.max(np.abs(mid))) if mid.size else 1.0
+    if s_peak > 1e-9:
+        side = side * (side_gain * m_peak / s_peak)
+    left = mid + side
+    right = mid - side
+    return np.stack([left, right]).astype(np.float32)
+
+
+def _chorus(audio: np.ndarray, sr: int, depth_ms: float = 6.0, rate_hz: float = 0.7, mix: float = 0.4) -> np.ndarray:
+    """Single-voice modulated delay chorus for ensemble shimmer on a mono signal.
+
+    Uses a fractional, LFO-modulated delay line (linear interpolation). Adds movement and width feel that
+    a static detune cannot. Returns a mono signal (apply before _pseudo_stereo).
+    """
+    audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+    n = len(audio)
+    if n == 0 or mix <= 0.0:
+        return audio
+    base = 0.012 * sr  # 12 ms base delay
+    depth = depth_ms / 1000.0 * sr
+    idx = np.arange(n, dtype=np.float64)
+    lfo = base + depth * (0.5 + 0.5 * np.sin(2.0 * np.pi * rate_hz * idx / float(sr)))
+    read = idx - lfo
+    read = np.clip(read, 0.0, n - 1.0)
+    i0 = np.floor(read).astype(np.int64)
+    frac = (read - i0).astype(np.float32)
+    i1 = np.minimum(i0 + 1, n - 1)
+    wet = audio[i0] * (1.0 - frac) + audio[i1] * frac
+    return ((1.0 - mix * 0.5) * audio + mix * wet).astype(np.float32)
+
+
+# Per-style stereo width / chorus amounts for the final widening stage. Ambient/synthwave/trance want
+# lush wide movement; 8bit stays narrow and dry for an authentic chip feel.
+STEREO_PROFILES: dict[str, dict[str, float]] = {
+    "ambient": {"width": 0.85, "chorus_mix": 0.55, "chorus_rate": 0.35},
+    "ambient techno": {"width": 0.70, "chorus_mix": 0.35, "chorus_rate": 0.5},
+    "lofi": {"width": 0.55, "chorus_mix": 0.30, "chorus_rate": 0.6},
+    "8bit": {"width": 0.30, "chorus_mix": 0.12, "chorus_rate": 1.1},
+    "melodic techno": {"width": 0.65, "chorus_mix": 0.30, "chorus_rate": 0.5},
+    "acid techno": {"width": 0.62, "chorus_mix": 0.25, "chorus_rate": 0.6},
+    "synthwave": {"width": 0.78, "chorus_mix": 0.50, "chorus_rate": 0.45},
+    "trance": {"width": 0.80, "chorus_mix": 0.45, "chorus_rate": 0.5},
+    "house": {"width": 0.62, "chorus_mix": 0.28, "chorus_rate": 0.55},
+    "breakbeat": {"width": 0.58, "chorus_mix": 0.22, "chorus_rate": 0.7},
+    "electronic": {"width": 0.60, "chorus_mix": 0.30, "chorus_rate": 0.6},
+}
+
+
+def _finalize_stereo(audio: np.ndarray, sr: int, profile: Any, ceiling: float = 0.97) -> np.ndarray:
+    """Final width stage shared by both render paths: light chorus -> pseudo-stereo -> safety clip.
+
+    Takes a mono mastered signal, returns a (2, n) stereo array. This is what gives the output the
+    'big and wide' quality a mono sum can never have, without any samples.
+    """
+    audio = np.nan_to_num(np.asarray(audio, dtype=np.float32).reshape(-1), nan=0.0, posinf=0.0, neginf=0.0)
+    if audio.size == 0:
+        return np.zeros((2, sr), dtype=np.float32)
+    params = STEREO_PROFILES.get(str(profile or "").strip().lower(), STEREO_PROFILES["electronic"])
+    mono = _chorus(audio, sr, depth_ms=6.0, rate_hz=float(params["chorus_rate"]), mix=float(params["chorus_mix"]))
+    stereo = _pseudo_stereo(mono, sr, width=float(params["width"]))
+    peak = float(np.max(np.abs(stereo))) if stereo.size else 0.0
+    if peak > ceiling:
+        stereo = stereo * (ceiling / max(peak, 1e-9))
+    return np.clip(stereo, -1.0, 1.0).astype(np.float32)
+
+
+def _write_wav(path: Path, audio: np.ndarray, sample_rate: int, target_peak: float = 0.92, already_mastered: bool = False) -> None:
+    audio = np.asarray(audio, dtype=np.float32)
     audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
-    if len(audio) == 0:
+    # Accept either mono (n,) or stereo (2, n). Detect stereo by a leading dimension of 2.
+    stereo = audio.ndim == 2 and audio.shape[0] == 2
+    if not stereo:
+        audio = audio.reshape(-1)
+    if audio.size == 0:
         audio = np.zeros(sample_rate, dtype=np.float32)
+        stereo = False
     if not already_mastered:
         # Legacy path: bare peak normalization. Skip when the signal already went through _master_bus,
         # otherwise this would scale the limiter's output back down and re-introduce the "quiet but clippy" problem.
-        peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
+        peak = float(np.max(np.abs(audio))) if audio.size else 0.0
         if peak > 1e-6:
             audio = audio / peak * float(target_peak)
-    pcm16 = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16)
+    clipped = np.clip(audio, -1.0, 1.0)
+    if stereo:
+        # Interleave L/R into frame order for a 2-channel WAV.
+        interleaved = np.empty(clipped.shape[1] * 2, dtype=np.float32)
+        interleaved[0::2] = clipped[0]
+        interleaved[1::2] = clipped[1]
+        pcm16 = (interleaved * 32767.0).astype(np.int16)
+        nchannels = 2
+    else:
+        pcm16 = (clipped * 32767.0).astype(np.int16)
+        nchannels = 1
     path.parent.mkdir(parents=True, exist_ok=True)
     with wave.open(str(path), "wb") as wf:
-        wf.setnchannels(1)
+        wf.setnchannels(nchannels)
         wf.setsampwidth(2)
         wf.setframerate(sample_rate)
         wf.writeframes(pcm16.tobytes())
@@ -2370,7 +2629,14 @@ class PythonMusicRenderer:
         bar_sec = beat_sec * 4.0
         step_sec = bar_sec / 16.0
         total_bars = max(1, int(math.ceil(duration / bar_sec)))
-        seed = int(composer.get("seed", _stable_seed(spec.mood)))
+        # Mix the variation seed/strength into the render rng so the actual audio realization (note
+        # micro-timing, arp rotation, fills, octave choices) differs run-to-run for the same prompt.
+        # Previously only the stable prompt seed reached here, so identical prompts produced identical
+        # audio regardless of variation_strength.
+        base_seed = int(composer.get("seed", _stable_seed(spec.mood)))
+        var_seed = int(composer.get("variation_seed", 0))
+        var_strength = int(composer.get("variation_strength", DEFAULT_VARIATION_STRENGTH))
+        seed = _stable_seed(f"{base_seed}|{var_seed}|{var_strength}", "render-rng") if var_strength > 0 and var_seed else base_seed
         rng = np.random.default_rng(seed)
         mix = composer.get("mix", {}) if isinstance(composer.get("mix"), dict) else {}
         automation = composer.get("automation", {}) if isinstance(composer.get("automation"), dict) else {}
@@ -2452,6 +2718,8 @@ class PythonMusicRenderer:
             combined[-fade:] *= ramp[::-1]
         if spec.loopable:
             combined = _make_loopable(combined, sample_rate)
+        # Final width stage: mono master -> chorus + pseudo-stereo -> stereo WAV.
+        combined = _finalize_stereo(combined, sample_rate, profile)
         _write_wav(wav_path, combined, sample_rate, already_mastered=True)
 
     def _render_harmony(
@@ -2769,7 +3037,7 @@ def _event_plain_result(event: AstrMessageEvent, text: str) -> Any:
     "astrbot_plugin_pymusic",
     "Lenovo",
     "Generate structured pure-Python WAV electronic music from prompts and send it to QQ chats.",
-    "v0.4.6",
+    "v0.4.7",
     repo="https://github.com/blueraina/astrbot_plugin_pymusic",
 )
 class PyMusicPlugin(Star):
@@ -2898,37 +3166,34 @@ class PyMusicPlugin(Star):
             variation_strength,
         )
         if ai_code:
-            try:
-                await asyncio.to_thread(self._run_ai_python_renderer, ai_code, wav_path, spec.duration, sample_rate, spec.loopable, ai_profile)
-            except Exception as exc:
-                render_error = _format_exception(exc)
-                logger.warning(f"[pymusic] AI Python renderer failed, trying one repair: {render_error}")
-                wav_path.unlink(missing_ok=True)
-                repaired_code = await self._repair_python_renderer_code(
-                    brief,
-                    event,
-                    spec,
-                    technique_guides,
-                    composer,
-                    ai_code,
-                    render_error,
-                )
-                if repaired_code:
-                    try:
-                        await asyncio.to_thread(
-                            self._run_ai_python_renderer,
-                            repaired_code,
-                            wav_path,
-                            spec.duration,
-                            sample_rate,
-                            spec.loopable,
-                            ai_profile,
-                        )
-                    except Exception as retry_exc:
-                        logger.warning(
-                            f"[pymusic] repaired AI Python renderer failed, using fixed renderer fallback: {_format_exception(retry_exc)}"
-                        )
-                        wav_path.unlink(missing_ok=True)
+            current_code = ai_code
+            # Try the model's code, then up to MAX_RENDER_REPAIRS repair rounds, feeding each new
+            # runtime error back to the model. Most failures are fixable empty-slice / NameError issues,
+            # so a couple of retries dramatically raises the chance the richer AI path actually lands
+            # instead of silently dropping to the fixed renderer.
+            for attempt in range(MAX_RENDER_REPAIRS + 1):
+                try:
+                    await asyncio.to_thread(self._run_ai_python_renderer, current_code, wav_path, spec.duration, sample_rate, spec.loopable, ai_profile)
+                    break
+                except Exception as exc:
+                    render_error = _format_exception(exc)
+                    wav_path.unlink(missing_ok=True)
+                    if attempt >= MAX_RENDER_REPAIRS:
+                        logger.warning(f"[pymusic] AI Python renderer failed after {attempt} repair(s), using fixed renderer fallback: {render_error}")
+                        break
+                    logger.warning(f"[pymusic] AI Python renderer failed (attempt {attempt + 1}), repairing: {render_error}")
+                    repaired_code = await self._repair_python_renderer_code(
+                        brief,
+                        event,
+                        spec,
+                        technique_guides,
+                        composer,
+                        current_code,
+                        render_error,
+                    )
+                    if not repaired_code:
+                        break
+                    current_code = repaired_code
         if not wav_path.exists() or wav_path.stat().st_size <= 44:
             plan = await self._build_plan(brief, event, spec, composer)
             await asyncio.to_thread(self.renderer.render, spec, plan, wav_path, sample_rate, diversity_level)
@@ -3034,12 +3299,12 @@ class PyMusicPlugin(Star):
         composer_data = _composer_to_dict(composer)
         system_prompt = (
             "You write pure Python DSP code for a sandboxed music renderer. Return Python code only, no markdown, no explanation. "
-            "The code must define render(duration, sample_rate, loopable); small helper functions are allowed. "
+            "The code must define render(duration, sample_rate, loopable); small helper functions and simple helper classes (without base classes) are allowed. "
             "render must return a one-dimensional numpy array of float audio samples in -1..1. "
             "Allowed imports: numpy as np, math, random, musicpy as mp. Use musicpy for composition helpers only; do not use musicpy file export, playback, or DAW features. Do not read or write files. "
-            "Never import, reference, or use the identifier name wave; the host plugin writes the returned audio array to a WAV file after render() finishes. "
-            "Do not call wave.open or any file-writing API. Use variable names like audio, signal, osc, layer, or buffer instead of wave. "
+            "Do not import the wave module; the host plugin writes the returned audio array to a WAV file after render() finishes (a local variable named wave is fine). "
             "Do not use os, sys, subprocess, pathlib, sockets, network, eval, exec, open, __import__, external samples, or any network music-generation API. "
+            "You may use common builtins (str, int, float, isinstance, map, filter, enumerate, zip, range, min, max, sum, sorted, round, abs, slice, print) and plain helper functions or simple helper classes without base classes. "
             "The sandbox provides safe_add(target,start,source,gain=1.0), safe_assign(target,start,source), safe_min_assign(target,start,source), and safe_multiply(target,start,source). "
             "Use these host-provided helpers for every partial array write: notes, drum hits, delay taps, reverb tails, sidechain envelopes, filter/automation segments, risers, downlifters, fills, and texture layers. "
             "Never do target[start:end] += source, target[start:end] = source, np.minimum(target[start:end], source), or target[start:end] *= source directly unless start/end are known to cover the full array. "
@@ -3084,8 +3349,7 @@ class PyMusicPlugin(Star):
                 "composition_blueprint": composer_data,
                 "structured_composer_plan": composer_data,
                 "implementation_notes": [
-                    "Do not import or reference wave. render() must only return a numpy audio array; the host plugin handles WAV encoding and file writing.",
-                    "Avoid using wave as a variable name because it is reserved by the sandbox validator; use audio, signal, osc, layer, or buffer.",
+                    "Do not import the wave module; render() must only return a numpy audio array and the host plugin handles WAV encoding and file writing. A local variable named wave is allowed.",
                     "Use host-provided safe_add for note/drum/delay/reverb/texture/riser additions.",
                     "Use host-provided safe_min_assign for sidechain ducking envelopes or any np.minimum-style gain writes.",
                     "Use host-provided safe_assign or safe_multiply for partial automation/filter/gain segments.",
@@ -3103,7 +3367,7 @@ class PyMusicPlugin(Star):
             ensure_ascii=False,
         )
         try:
-            response = await self._provider_text_chat(provider, user_prompt, system_prompt)
+            response = await self._provider_text_chat(provider, user_prompt, system_prompt, timeout=self._code_call_timeout())
             code = _extract_python_code(getattr(response, "completion_text", "") or str(response))
             _validate_generated_python(code)
             return code
@@ -3129,8 +3393,9 @@ class PyMusicPlugin(Star):
             "You repair sandboxed pure Python DSP renderer code. Return the complete corrected Python code only, no markdown, no explanation. "
             "The corrected code must define render(duration, sample_rate, loopable) and return a one-dimensional numpy float audio array in -1..1. "
             "Allowed imports: numpy as np, math, random, musicpy as mp. Use musicpy for composition helpers only; do not use musicpy file export, playback, or DAW features. Do not read or write files. "
-            "Never import, reference, or use the identifier name wave; the host plugin writes the returned array to WAV. "
+            "Do not import the wave module; the host plugin writes the returned array to WAV (a local variable named wave is fine). "
             "Do not use os, sys, subprocess, pathlib, sockets, network, eval, exec, open, __import__, external samples, or any network music-generation API. "
+            "If the error is a NameError, the sandbox only provides these builtins: str, int, float, complex, bool, isinstance, issubclass, type, len, abs, round, pow, divmod, min, max, sum, sorted, reversed, range, enumerate, zip, map, filter, iter, next, slice, list, tuple, dict, set, frozenset, all, any, repr, format, ord, chr, hash, print, and common exceptions; rewrite to use only these (no getattr/setattr/open/vars-traversal). "
             "Fix the reported runtime error while preserving the musical intent and composition_blueprint. "
             "The sandbox provides safe_add(target,start,source,gain=1.0), safe_assign(target,start,source), safe_min_assign(target,start,source), and safe_multiply(target,start,source). "
             "Use these helpers for every partial write: notes, drum hits, delay taps, reverb tails, sidechain envelopes, automation/filter/gain segments, risers, downlifters, fills, and texture layers. "
@@ -3151,7 +3416,8 @@ class PyMusicPlugin(Star):
                 "repair_checklist": [
                     "Return full corrected code, not a diff.",
                     "Keep render(duration, sample_rate, loopable).",
-                    "Do not import or reference wave.",
+                    "Do not import the wave module (a local variable named wave is fine).",
+                    "If the failure is a NameError, replace the missing name with one of the provided builtins or numpy/math equivalents.",
                     "Use safe_add for note, drum, delay, reverb, riser, downlifter, fill and texture additions.",
                     "Use safe_min_assign for sidechain ducking envelopes and np.minimum-style partial writes.",
                     "Use safe_assign or safe_multiply for automation, filter and gain segments.",
@@ -3163,7 +3429,7 @@ class PyMusicPlugin(Star):
             ensure_ascii=False,
         )
         try:
-            response = await self._provider_text_chat(provider, user_prompt, system_prompt)
+            response = await self._provider_text_chat(provider, user_prompt, system_prompt, timeout=self._code_call_timeout())
             code = _extract_python_code(getattr(response, "completion_text", "") or str(response))
             _validate_generated_python(code)
             return code
@@ -3217,8 +3483,22 @@ def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
     raise ImportError(f"import not allowed: {name}")
 
 
+def _safe_print(*args, **kwargs):
+    # AI code sometimes leaves debug prints; route them to stderr so they never corrupt the
+    # stdout/binary channel and never break the render.
+    kwargs["file"] = sys.stderr
+    try:
+        print(*args, **kwargs)
+    except Exception:
+        pass
+
+
 safe_builtins = {
     "__import__": safe_import,
+    # Implicitly required by the `class` statement; the AST validator already restricts what the
+    # class body can reference, and a class without base classes cannot reach anything new.
+    "__build_class__": __build_class__,
+    # Numeric / container builtins.
     "abs": abs,
     "min": min,
     "max": max,
@@ -3227,19 +3507,52 @@ safe_builtins = {
     "range": range,
     "int": int,
     "float": float,
+    "complex": complex,
     "bool": bool,
     "round": round,
     "pow": pow,
+    "divmod": divmod,
     "enumerate": enumerate,
     "zip": zip,
+    "map": map,
+    "filter": filter,
+    "iter": iter,
+    "next": next,
+    "slice": slice,
     "list": list,
     "tuple": tuple,
     "dict": dict,
     "set": set,
+    "frozenset": frozenset,
     "sorted": sorted,
     "reversed": reversed,
     "all": all,
     "any": any,
+    # String / type / introspection builtins the model routinely uses. None of these grant
+    # file, network, or process access, so they are safe to expose without weakening the sandbox.
+    "str": str,
+    "bytes": bytes,
+    "bytearray": bytearray,
+    "repr": repr,
+    "format": format,
+    "ord": ord,
+    "chr": chr,
+    "hash": hash,
+    "isinstance": isinstance,
+    "issubclass": issubclass,
+    "type": type,
+    "print": _safe_print,
+    # Common exception classes so AI code can use try/except without NameError on the handler.
+    "Exception": Exception,
+    "ValueError": ValueError,
+    "TypeError": TypeError,
+    "IndexError": IndexError,
+    "KeyError": KeyError,
+    "ZeroDivisionError": ZeroDivisionError,
+    "OverflowError": OverflowError,
+    "ArithmeticError": ArithmeticError,
+    "RuntimeError": RuntimeError,
+    "StopIteration": StopIteration,
 }
 
 
@@ -3340,6 +3653,7 @@ def safe_multiply(target, start, source):
 
 env = {
     "__builtins__": safe_builtins,
+    "__name__": "ai_renderer",
     "np": np,
     "math": math,
     "random": random,
@@ -3410,6 +3724,8 @@ with open(str(out_path), "wb") as f:
                 mastered[-fade:] *= ramp[::-1]
             if loopable:
                 mastered = _make_loopable(mastered, sample_rate)
+            # Same final width stage as the fixed renderer so the AI path also outputs wide stereo.
+            mastered = _finalize_stereo(mastered, sample_rate, profile)
             _write_wav(wav_path, mastered, sample_rate, already_mastered=True)
         finally:
             code_path.unlink(missing_ok=True)
@@ -3558,8 +3874,9 @@ with open(str(out_path), "wb") as f:
         except Exception:
             return None
 
-    async def _provider_text_chat(self, provider: Any, prompt: str, system_prompt: str) -> Any:
-        timeout = self._model_call_timeout()
+    async def _provider_text_chat(self, provider: Any, prompt: str, system_prompt: str, timeout: int | None = None) -> Any:
+        if timeout is None:
+            timeout = self._model_call_timeout()
         try:
             return await asyncio.wait_for(
                 provider.text_chat(prompt=prompt, system_prompt=system_prompt),
@@ -3577,6 +3894,16 @@ with open(str(out_path), "wb") as f:
         except Exception:
             value = DEFAULT_MODEL_CALL_TIMEOUT_SECONDS
         return max(1, value)
+
+    def _code_call_timeout(self) -> int:
+        # Writing/repairing a full multi-track render() is a long generation; the small JSON-planning
+        # timeout (default 12s) almost always cuts it off, which is why the AI path used to fall back
+        # to the fixed renderer most of the time. Give code generation its own, much larger budget.
+        try:
+            value = int(_cfg_get(self.config, "code_call_timeout_sec", DEFAULT_CODE_CALL_TIMEOUT_SECONDS))
+        except Exception:
+            value = DEFAULT_CODE_CALL_TIMEOUT_SECONDS
+        return max(self._model_call_timeout(), value)
 
     def _keep_history_wav(self) -> bool:
         return bool(_cfg_get(self.config, "keep_history_wav", False))
