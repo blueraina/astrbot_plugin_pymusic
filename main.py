@@ -2604,6 +2604,8 @@ class PyMusicPlugin(Star):
             "The code must define render(duration, sample_rate, loopable); small helper functions are allowed. "
             "render must return a one-dimensional numpy array of float audio samples in -1..1. "
             "Allowed imports: numpy as np, math, random. Do not read or write files. "
+            "Never import, reference, or use the identifier name wave; the host plugin writes the returned audio array to a WAV file after render() finishes. "
+            "Do not call wave.open or any file-writing API. Use variable names like audio, signal, osc, layer, or buffer instead of wave. "
             "Do not use os, sys, subprocess, pathlib, sockets, network, eval, exec, open, __import__, external samples, or any music-generation API. "
             "Use the provided composition_blueprint / structured_composer_plan as the composition source of truth. Do not invent a single short melody array inside render and loop it unchanged. "
             "Implement the plan's section timeline, chord progression, call motif, response motif, B variation, bass pattern, drum steps, fills, and automation. "
@@ -2645,6 +2647,8 @@ class PyMusicPlugin(Star):
                 "composition_blueprint": composer_data,
                 "structured_composer_plan": composer_data,
                 "implementation_notes": [
+                    "Do not import or reference wave. render() must only return a numpy audio array; the host plugin handles WAV encoding and file writing.",
+                    "Avoid using wave as a variable name because it is reserved by the sandbox validator; use audio, signal, osc, layer, or buffer.",
                     "Use composition_blueprint.motifs.call / response / b_variation instead of ad hoc one-array melody loops.",
                     "Use variation_seed to initialize any local random generator so repeated identical prompts can sound different when variation_strength > 0.",
                     "Use variation_strength as a musical control, not just a random noise amount: higher values should alter phrase contour, fills, accents, automation and transitions more clearly.",
