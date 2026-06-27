@@ -34,11 +34,21 @@ DEFAULT_SAMPLE_RATE = 44100
 DEFAULT_DIVERSITY_LEVEL = 1
 DEFAULT_MODEL_CALL_TIMEOUT_SECONDS = 12
 DEFAULT_CODE_CALL_TIMEOUT_SECONDS = 120
-MAX_RENDER_REPAIRS = 2
+MAX_RENDER_REPAIRS = 4
 DEFAULT_VARIATION_STRENGTH = 1
 MAX_RANDOM_SEED = 2**32 - 1
 VOICE_SEND_TIMEOUT_SECONDS = 8
 FILE_SEND_TIMEOUT_SECONDS = 20
+
+# Names the sandbox pre-defines for AI renderer code (array-write helpers + DSP helpers + modules).
+# AI code must CALL these, never def/class/assign them — shadowing a host helper with a local is the
+# root cause of the observed UnboundLocalError and the (0,) broadcast crashes (AI re-implemented a
+# broken safe_add). The validator rejects any attempt to bind these names.
+RESERVED_HOST_NAMES = frozenset({
+    "safe_add", "safe_assign", "safe_min_assign", "safe_multiply", "_safe_slice",
+    "osc", "adsr", "lowpass", "highpass", "fft_filter",
+    "np", "math", "random", "mp",
+})
 
 # Per-style mastering targets consumed by _master_bus and the render fixed/AI paths.
 # ceiling: limiter ceiling; pre_gain: make-up gain into the limiter (loudness);
@@ -989,10 +999,44 @@ def _format_exception(exc: BaseException) -> str:
     return exc.__class__.__name__
 
 
+_AUDIO_NOISE_RE = re.compile(r"(ALSA lib |jack server|JackShm|snd_|_snd_|Cannot connect to server|PCM |pcm\.c|conf\.c|confmisc\.c|Unknown PCM|pygame)", re.I)
+
+
+def _clean_renderer_error(stderr: str, stdout: str = "", limit: int = 1500) -> str:
+    """Extract the real Python traceback from a subprocess stderr that may be polluted with ALSA/JACK
+    audio-backend noise, so the repair model sees the actual error instead of device-probe spam."""
+    text = (stderr or stdout or "").strip()
+    if not text:
+        return "unknown AI renderer error"
+    lines = text.splitlines()
+    # Prefer the LAST "Traceback (most recent call last):" block — that is the genuine render failure.
+    start = None
+    for idx in range(len(lines) - 1, -1, -1):
+        if lines[idx].lstrip().startswith("Traceback (most recent call last):"):
+            start = idx
+            break
+    if start is not None:
+        block = [ln for ln in lines[start:] if not _AUDIO_NOISE_RE.search(ln)]
+        cleaned = "\n".join(block).strip()
+        if cleaned:
+            return cleaned[-limit:]
+    # No traceback found: drop the audio-noise lines and keep whatever remains.
+    block = [ln for ln in lines if not _AUDIO_NOISE_RE.search(ln)]
+    cleaned = "\n".join(block).strip()
+    return (cleaned or text)[-limit:]
+
+
 def _validate_generated_python(source: str) -> None:
     if len(source) > 32000:
         raise ValueError("generated Python code is too long")
-    tree = ast.parse(source)
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        # Give the repair model a precise, line-anchored message instead of a bare SyntaxError.
+        line_no = exc.lineno or 0
+        src_lines = source.splitlines()
+        offending = src_lines[line_no - 1].strip() if 0 < line_no <= len(src_lines) else ""
+        raise ValueError(f"SyntaxError at line {line_no}: {exc.msg} | offending line: {offending}") from exc
     allowed_imports = {"numpy", "math", "random", "musicpy"}
     blocked_names = {
         "open",
@@ -1017,27 +1061,21 @@ def _validate_generated_python(source: str) -> None:
         "urllib",
         "builtins",
     }
+    # Submodule names that must never appear in an import path (numpy.ctypeslib, numpy.testing, etc.).
+    blocked_import_parts = {
+        "ctypeslib", "lib", "testing", "distutils", "f2py", "save", "load",
+        "fromfile", "tofile", "memmap", "genfromtxt", "loadtxt", "savetxt", "savez",
+    }
+    # Attribute names that grant file IO / serialization / interpreter escape. Kept narrow: generic
+    # words like read/write/lib/testing were collateral-killing legitimate code (a custom buffer's
+    # .read, a var named lib) and dropping the whole generation to the fixed renderer. The import
+    # sandbox + no `open` builtin already block real file IO, so the attribute list only needs the
+    # numpy/ndarray methods that themselves touch disk or escape.
     blocked_attrs = {
-        "save",
-        "write",
-        "read",
-        "export",
-        "play",
-        "savez",
-        "savez_compressed",
-        "load",
-        "fromfile",
-        "tofile",
-        "memmap",
-        "genfromtxt",
-        "loadtxt",
-        "savetxt",
-        "ctypeslib",
-        "DataSource",
-        "lib",
-        "testing",
-        "distutils",
-        "f2py",
+        "tofile", "fromfile", "memmap", "save", "savez", "savez_compressed",
+        "savetxt", "genfromtxt", "loadtxt", "dump", "dumps", "fromregex", "frombuffer",
+        "fromstring", "ctypeslib", "DataSource", "_datasource", "ndpointer",
+        "__globals__", "__subclasses__", "__bases__", "__mro__", "__reduce__",
     }
     has_render = False
     for node in ast.walk(tree):
@@ -1045,13 +1083,13 @@ def _validate_generated_python(source: str) -> None:
             for alias in node.names:
                 root = alias.name.split(".", 1)[0]
                 parts = set(alias.name.split("."))
-                if root not in allowed_imports or parts & blocked_attrs:
+                if root not in allowed_imports or parts & blocked_import_parts:
                     raise ValueError(f"disallowed import: {alias.name}")
         elif isinstance(node, ast.ImportFrom):
             root = (node.module or "").split(".", 1)[0]
             parts = set((node.module or "").split("."))
             alias_parts = {alias.name.split(".", 1)[0] for alias in node.names}
-            if node.level != 0 or root not in allowed_imports or parts & blocked_attrs or alias_parts & blocked_attrs:
+            if node.level != 0 or root not in allowed_imports or parts & blocked_import_parts or alias_parts & blocked_import_parts:
                 raise ValueError(f"disallowed import: {node.module}")
         elif isinstance(node, ast.ClassDef):
             # Plain helper classes (envelopes, voices, small oscillator objects) are harmless inside the
@@ -1060,9 +1098,21 @@ def _validate_generated_python(source: str) -> None:
             # bare `class Foo:` is fine.
             if node.bases or node.keywords:
                 raise ValueError("generated renderer classes must not declare base classes")
+            if node.name in RESERVED_HOST_NAMES:
+                raise ValueError(f"do not redefine the host-provided name '{node.name}'; call it directly")
         elif isinstance(node, ast.FunctionDef):
             if node.name == "render":
                 has_render = True
+            if node.name in RESERVED_HOST_NAMES:
+                raise ValueError(f"do not redefine the host-provided helper '{node.name}'; call it directly")
+        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+            # Block rebinding a host helper/module name (def/= shadowing is what caused UnboundLocalError
+            # and the broken re-implemented safe_add). Walk the target(s) for reserved names.
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for tgt in targets:
+                for sub in ast.walk(tgt):
+                    if isinstance(sub, ast.Name) and sub.id in RESERVED_HOST_NAMES:
+                        raise ValueError(f"do not assign to the host-provided name '{sub.id}'; call it directly")
         elif isinstance(node, ast.Name):
             if node.id in blocked_names or node.id.startswith("__"):
                 raise ValueError(f"disallowed name: {node.id}")
@@ -3037,7 +3087,7 @@ def _event_plain_result(event: AstrMessageEvent, text: str) -> Any:
     "astrbot_plugin_pymusic",
     "Lenovo",
     "Generate structured pure-Python WAV electronic music from prompts and send it to QQ chats.",
-    "v0.4.7",
+    "v0.4.8",
     repo="https://github.com/blueraina/astrbot_plugin_pymusic",
 )
 class PyMusicPlugin(Star):
@@ -3305,7 +3355,11 @@ class PyMusicPlugin(Star):
             "Do not import the wave module; the host plugin writes the returned audio array to a WAV file after render() finishes (a local variable named wave is fine). "
             "Do not use os, sys, subprocess, pathlib, sockets, network, eval, exec, open, __import__, external samples, or any network music-generation API. "
             "You may use common builtins (str, int, float, isinstance, map, filter, enumerate, zip, range, min, max, sum, sorted, round, abs, slice, print) and plain helper functions or simple helper classes without base classes. "
-            "The sandbox provides safe_add(target,start,source,gain=1.0), safe_assign(target,start,source), safe_min_assign(target,start,source), and safe_multiply(target,start,source). "
+            "The sandbox PRE-DEFINES these helpers; call them directly and NEVER def, import, assign, or shadow these names (doing so causes UnboundLocalError and crashes): "
+            "safe_add(target,start,source,gain=1.0), safe_assign(target,start,source), safe_min_assign(target,start,source), safe_multiply(target,start,source) for array writes; "
+            "osc(freq,length,sr,wave='sine'|'saw'|'square'|'triangle') for oscillators; adsr(length,sr,attack,decay,sustain,release) for envelopes; "
+            "fft_filter(sig,sr,kind='low'|'high',cutoff_hz), lowpass(sig,sr,cutoff), highpass(sig,sr,cutoff) for filtering (cutoff may be a scalar or array; the helper coerces it). "
+            "Prefer these host helpers over hand-writing your own oscillator/envelope/filter — your own versions are the most common source of shape/scalar crashes. np, math, random (and mp if available) are also pre-bound; do not reassign them. "
             "Use these host-provided helpers for every partial array write: notes, drum hits, delay taps, reverb tails, sidechain envelopes, filter/automation segments, risers, downlifters, fills, and texture layers. "
             "Never do target[start:end] += source, target[start:end] = source, np.minimum(target[start:end], source), or target[start:end] *= source directly unless start/end are known to cover the full array. "
             "Do not use backslash line continuations; wrap long expressions in parentheses. "
@@ -3369,7 +3423,15 @@ class PyMusicPlugin(Star):
         try:
             response = await self._provider_text_chat(provider, user_prompt, system_prompt, timeout=self._code_call_timeout())
             code = _extract_python_code(getattr(response, "completion_text", "") or str(response))
-            _validate_generated_python(code)
+            if not code:
+                return None
+            try:
+                _validate_generated_python(code)
+            except Exception as val_exc:
+                # Validation/SyntaxError on the first generation: don't silently drop to the fixed
+                # renderer. Return the code anyway so _generate's repair loop gets a chance to fix it
+                # (it re-validates and routes the clear error back to the model).
+                logger.warning(f"[pymusic] AI Python code needs repair (validation failed): {_format_exception(val_exc)}")
             return code
         except Exception as exc:
             logger.warning(f"[pymusic] AI Python code generation failed, using fixed renderer fallback: {_format_exception(exc)}")
@@ -3397,7 +3459,10 @@ class PyMusicPlugin(Star):
             "Do not use os, sys, subprocess, pathlib, sockets, network, eval, exec, open, __import__, external samples, or any network music-generation API. "
             "If the error is a NameError, the sandbox only provides these builtins: str, int, float, complex, bool, isinstance, issubclass, type, len, abs, round, pow, divmod, min, max, sum, sorted, reversed, range, enumerate, zip, map, filter, iter, next, slice, list, tuple, dict, set, frozenset, all, any, repr, format, ord, chr, hash, print, and common exceptions; rewrite to use only these (no getattr/setattr/open/vars-traversal). "
             "Fix the reported runtime error while preserving the musical intent and composition_blueprint. "
-            "The sandbox provides safe_add(target,start,source,gain=1.0), safe_assign(target,start,source), safe_min_assign(target,start,source), and safe_multiply(target,start,source). "
+            "The sandbox PRE-DEFINES these helpers; call them directly and NEVER def, import, assign, or shadow these names (redefining one is itself a common cause of UnboundLocalError and broadcast crashes): "
+            "safe_add(target,start,source,gain=1.0), safe_assign(target,start,source), safe_min_assign(target,start,source), safe_multiply(target,start,source); "
+            "osc(freq,length,sr,wave), adsr(length,sr,attack,decay,sustain,release), fft_filter(sig,sr,kind,cutoff_hz), lowpass(sig,sr,cutoff), highpass(sig,sr,cutoff). np/math/random/mp are pre-bound; do not reassign them. "
+            "If the error is 'only 0-dimensional arrays can be converted to Python scalars' or a shape/broadcast error in your own filter/osc, replace your hand-written DSP with the host osc/adsr/fft_filter/lowpass/highpass helpers. "
             "Use these helpers for every partial write: notes, drum hits, delay taps, reverb tails, sidechain envelopes, automation/filter/gain segments, risers, downlifters, fills, and texture layers. "
             "Replace direct empty-slice-prone code such as target[start:end] += source, target[start:end] = source, target[start:end] = np.minimum(...), or target[start:end] *= source with the helpers. "
             "For sidechain or ducking gain envelopes specifically, use safe_min_assign(sc_gain, trigger_idx, sc_envelope). "
@@ -3444,15 +3509,41 @@ class PyMusicPlugin(Star):
         raw_path = wav_path.with_suffix(".f32")
         runner = r'''
 import math
+import os
 import random
 import sys
-import wave
 from pathlib import Path
 
+# Silence audio-backend probing (musicpy pulls in libraries that open ALSA/JACK/SDL on import and
+# flood stderr with device-not-found lines, which would otherwise bury the real Python traceback that
+# the host feeds back to the repair model). Set quiet env, then dup2 the C-level stderr fd to devnull
+# only across the musicpy import, and restore it afterwards so real tracebacks still reach the host.
+os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+os.environ.setdefault("ALSA_CONFIG_PATH", os.devnull)
+os.environ.setdefault("JACK_NO_START_SERVER", "1")
+
+_saved_stderr_fd = None
+try:
+    sys.stderr.flush()
+    _saved_stderr_fd = os.dup(2)
+    _devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(_devnull_fd, 2)
+    os.close(_devnull_fd)
+except Exception:
+    _saved_stderr_fd = None
 try:
     import musicpy as mp
 except Exception:
     mp = None
+finally:
+    if _saved_stderr_fd is not None:
+        try:
+            sys.stderr.flush()
+            os.dup2(_saved_stderr_fd, 2)
+            os.close(_saved_stderr_fd)
+        except Exception:
+            pass
 import numpy as np
 
 code_path = Path(sys.argv[1])
@@ -3565,6 +3656,11 @@ def _safe_runtime_view():
         "safe_assign": safe_assign,
         "safe_min_assign": safe_min_assign,
         "safe_multiply": safe_multiply,
+        "osc": osc,
+        "adsr": adsr,
+        "fft_filter": fft_filter,
+        "lowpass": lowpass,
+        "highpass": highpass,
     }
 
 
@@ -3651,6 +3747,89 @@ def safe_multiply(target, start, source):
     return target
 
 
+def _coerce_scalar(value, default):
+    # Accept a python number OR a numpy array (use its mean) so DSP helpers never crash on
+    # "only 0-dimensional arrays can be converted to Python scalars".
+    try:
+        arr = np.ravel(np.asarray(value, dtype=np.float64))
+        if arr.size == 0:
+            return float(default)
+        return float(np.mean(arr))
+    except Exception:
+        return float(default)
+
+
+def osc(freq, length, sr, wave="sine", phase=0.0):
+    """Vetted oscillator. wave in {sine, saw, square, triangle}. Returns float32 of given length."""
+    n = int(max(0, length))
+    if n <= 0:
+        return np.zeros(0, dtype=np.float32)
+    f = _coerce_scalar(freq, 220.0)
+    t = np.arange(n, dtype=np.float64) / float(max(1, sr))
+    ph = 2.0 * math.pi * f * t + float(_coerce_scalar(phase, 0.0))
+    w = str(wave).lower()
+    if w == "saw":
+        out = 2.0 * ((f * t + phase / (2 * math.pi)) % 1.0) - 1.0
+    elif w == "square":
+        out = np.sign(np.sin(ph))
+    elif w == "triangle":
+        out = 2.0 / math.pi * np.arcsin(np.sin(ph))
+    else:
+        out = np.sin(ph)
+    return out.astype(np.float32)
+
+
+def adsr(length, sr, attack=0.01, decay=0.05, sustain=0.7, release=0.1):
+    """Vetted ADSR envelope of `length` samples."""
+    n = int(max(0, length))
+    if n <= 0:
+        return np.zeros(0, dtype=np.float32)
+    a = max(0, min(n, int(_coerce_scalar(attack, 0.01) * sr)))
+    d = max(0, min(n - a, int(_coerce_scalar(decay, 0.05) * sr)))
+    r = max(0, min(n - a - d, int(_coerce_scalar(release, 0.1) * sr)))
+    s_n = max(0, n - a - d - r)
+    sus = float(_coerce_scalar(sustain, 0.7))
+    parts = []
+    if a:
+        parts.append(np.linspace(0.0, 1.0, a, endpoint=False))
+    if d:
+        parts.append(np.linspace(1.0, sus, d, endpoint=False))
+    if s_n:
+        parts.append(np.full(s_n, sus))
+    if r:
+        parts.append(np.linspace(sus if (d or s_n) else 1.0, 0.0, r, endpoint=True))
+    env = np.concatenate(parts) if parts else np.ones(n)
+    if len(env) < n:
+        env = np.pad(env, (0, n - len(env)))
+    return env[:n].astype(np.float32)
+
+
+def fft_filter(sig, sr, kind="low", cutoff_hz=1000.0):
+    """Vetted zero-phase high/low pass. kind in {low, high}. cutoff may be a scalar or array (mean used)."""
+    sig = np.asarray(sig, dtype=np.float32).reshape(-1)
+    n = len(sig)
+    cutoff = _coerce_scalar(cutoff_hz, 1000.0)
+    if n == 0 or cutoff <= 0.0:
+        return sig
+    spec = np.fft.rfft(sig.astype(np.float64))
+    freqs = np.fft.rfftfreq(n, d=1.0 / float(max(1, sr)))
+    width = max(40.0, cutoff * 0.1)
+    lo = max(0.0, cutoff - width * 0.5)
+    hi = cutoff + width * 0.5
+    ramp = np.clip((freqs - lo) / max(hi - lo, 1e-6), 0.0, 1.0)
+    gain_lp = 0.5 * (1.0 + np.cos(np.pi * ramp))
+    mask = gain_lp if str(kind).lower() == "low" else (1.0 - gain_lp)
+    return np.fft.irfft(spec * mask, n=n).astype(np.float32)
+
+
+def lowpass(sig, sr, cutoff):
+    return fft_filter(sig, sr, "low", cutoff)
+
+
+def highpass(sig, sr, cutoff):
+    return fft_filter(sig, sr, "high", cutoff)
+
+
 env = {
     "__builtins__": safe_builtins,
     "__name__": "ai_renderer",
@@ -3661,6 +3840,11 @@ env = {
     "safe_assign": safe_assign,
     "safe_min_assign": safe_min_assign,
     "safe_multiply": safe_multiply,
+    "osc": osc,
+    "adsr": adsr,
+    "fft_filter": fft_filter,
+    "lowpass": lowpass,
+    "highpass": highpass,
 }
 safe_builtins.update(
     {
@@ -3708,7 +3892,7 @@ with open(str(out_path), "wb") as f:
                 timeout=timeout,
             )
             if result.returncode != 0:
-                detail = (result.stderr or result.stdout or "unknown AI renderer error").strip()[-1000:]
+                detail = _clean_renderer_error(result.stderr, result.stdout)
                 raise RuntimeError(detail)
             if not raw_path.exists() or raw_path.stat().st_size < 4:
                 raise RuntimeError("AI renderer produced no audio samples")
