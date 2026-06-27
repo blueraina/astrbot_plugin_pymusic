@@ -15,7 +15,10 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import musicpy as mp
+try:
+    import musicpy as mp
+except Exception:  # LGPL dependency may be missing or broken; the plugin must still load and render.
+    mp = None
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, register
@@ -34,6 +37,42 @@ DEFAULT_VARIATION_STRENGTH = 1
 MAX_RANDOM_SEED = 2**32 - 1
 VOICE_SEND_TIMEOUT_SECONDS = 8
 FILE_SEND_TIMEOUT_SECONDS = 20
+
+# Per-style mastering targets consumed by _master_bus and the render fixed/AI paths.
+# ceiling: limiter ceiling; pre_gain: make-up gain into the limiter (loudness);
+# sat_drive: gentle pre-limiter tanh drive; lowpass_hz: optional bus low-pass (None = keep highs);
+# hp_nonbass_hz: high-pass for non-bass layers (clears sub mud); reverb_send_hp_hz: high-pass the wet send.
+MASTER_DEFAULT_PROFILE: dict[str, Any] = {
+    "ceiling": 0.95,
+    "pre_gain": 1.30,
+    "sat_drive": 0.9,
+    "lowpass_hz": None,
+    "hp_nonbass_hz": 45.0,
+    "reverb_send_hp_hz": 280.0,
+    "release_ms": 80.0,
+}
+MASTER_PROFILES: dict[str, dict[str, Any]] = {
+    "ambient": {"ceiling": 0.92, "pre_gain": 1.15, "sat_drive": 0.6, "lowpass_hz": 9000.0, "hp_nonbass_hz": 40.0, "reverb_send_hp_hz": 300.0, "release_ms": 140.0},
+    "ambient techno": {"ceiling": 0.95, "pre_gain": 1.25, "sat_drive": 0.8, "lowpass_hz": None, "hp_nonbass_hz": 45.0, "reverb_send_hp_hz": 280.0, "release_ms": 100.0},
+    "lofi": {"ceiling": 0.90, "pre_gain": 1.30, "sat_drive": 1.0, "lowpass_hz": 6500.0, "hp_nonbass_hz": 45.0, "reverb_send_hp_hz": 320.0, "release_ms": 110.0},
+    "8bit": {"ceiling": 0.93, "pre_gain": 1.20, "sat_drive": 0.7, "lowpass_hz": 12000.0, "hp_nonbass_hz": 60.0, "reverb_send_hp_hz": 400.0, "release_ms": 70.0},
+    "melodic techno": {"ceiling": 0.96, "pre_gain": 1.35, "sat_drive": 0.9, "lowpass_hz": None, "hp_nonbass_hz": 45.0, "reverb_send_hp_hz": 280.0, "release_ms": 80.0},
+    "acid techno": {"ceiling": 0.96, "pre_gain": 1.40, "sat_drive": 1.1, "lowpass_hz": None, "hp_nonbass_hz": 50.0, "reverb_send_hp_hz": 300.0, "release_ms": 70.0},
+    "synthwave": {"ceiling": 0.95, "pre_gain": 1.30, "sat_drive": 0.9, "lowpass_hz": None, "hp_nonbass_hz": 45.0, "reverb_send_hp_hz": 280.0, "release_ms": 90.0},
+    "trance": {"ceiling": 0.96, "pre_gain": 1.35, "sat_drive": 0.9, "lowpass_hz": None, "hp_nonbass_hz": 45.0, "reverb_send_hp_hz": 260.0, "release_ms": 80.0},
+    "house": {"ceiling": 0.96, "pre_gain": 1.35, "sat_drive": 0.9, "lowpass_hz": None, "hp_nonbass_hz": 45.0, "reverb_send_hp_hz": 280.0, "release_ms": 80.0},
+    "breakbeat": {"ceiling": 0.96, "pre_gain": 1.30, "sat_drive": 0.9, "lowpass_hz": None, "hp_nonbass_hz": 50.0, "reverb_send_hp_hz": 300.0, "release_ms": 70.0},
+    "electronic": dict(MASTER_DEFAULT_PROFILE),
+}
+
+
+def _master_params_for(profile: Any) -> dict[str, Any]:
+    """Return a fresh copy of the mastering params for a style profile (falls back to the default)."""
+    key = str(profile or "").strip().lower()
+    base = dict(MASTER_DEFAULT_PROFILE)
+    base.update(MASTER_PROFILES.get(key, {}))
+    return base
+
 
 TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
     {
@@ -1062,26 +1101,38 @@ def _strip_command_prefix(text: str) -> str:
 
 def _profile_name_from_text(text: str) -> str:
     lower = text.lower()
-    # Explicit genre words should win over scene/mood words such as “寒冬” or “雨”.
-    if any(word in lower or word in text for word in ["ambient techno", "dub techno", "氛围科技", "深空科技"]):
+    def has(words: list[str]) -> bool:
+        return any(word in lower or word in text for word in words)
+
+    # Explicit genre words should win over scene/mood words such as "霓虹", "黑暗", "寒冬", or "雨".
+    if has(["ambient techno", "dub techno", "氛围科技", "深空科技"]):
         return "ambient techno"
-    if any(word in lower or word in text for word in ["synthwave", "retro", "neon", "80s", "霓虹", "复古未来"]):
+    if has(["synthwave", "retrowave", "outrun", "复古未来"]):
         return "synthwave"
-    if any(word in lower or word in text for word in ["trance", "uplift", "rave", "anthem", "迷幻", "锐舞", "高能"]):
+    if has(["trance", "uplift", "rave", "anthem", "迷幻", "锐舞", "高能"]):
         return "trance"
-    if any(word in lower or word in text for word in ["house", "club", "deep house", "浩室", "舞曲"]):
+    if has(["house", "club", "deep house", "浩室", "舞曲"]):
         return "house"
-    if any(word in lower or word in text for word in ["breakbeat", "breaks", "idm", "碎拍", "故障"]):
+    if has(["breakbeat", "breaks", "idm", "碎拍"]):
         return "breakbeat"
-    if any(word in lower or word in text for word in ["8bit", "chiptune", "pixel", "arcade", "game", "像素", "游戏"]):
+    if has(["8bit", "chiptune", "pixel", "arcade", "game", "像素", "游戏"]):
         return "8bit"
-    if any(word in lower or word in text for word in ["acid", "303", "acid techno", "cyber", "赛博", "酸性"]):
+    if has(["303", "acid techno", "酸性"]) or re.search(r"(?<![a-z0-9_])acid(?![a-z0-9_])", lower):
         return "acid techno"
-    if any(word in lower or word in text for word in ["techno", "melodic techno", "dark", "underground", "黑暗", "紧张", "地下"]):
+    if has(["techno", "melodic techno"]):
         return "melodic techno"
-    if any(word in lower or word in text for word in ["lofi", "rain", "cafe", "study", "chill", "雨", "咖啡", "学习", "放松"]):
+    if has(["lofi"]):
         return "lofi"
-    if any(word in lower or word in text for word in ["ambient", "winter", "ice", "cold", "lonely", "wind", "氛围", "星空", "宇宙", "空灵", "寒冬", "冰", "冷", "冬", "孤独", "风"]):
+    if has(["ambient", "氛围", "空灵"]):
+        return "ambient"
+
+    if has(["cyber", "赛博", "dark", "underground", "黑暗", "紧张", "地下", "故障"]):
+        return "melodic techno"
+    if has(["retro", "neon", "80s", "霓虹"]):
+        return "synthwave"
+    if has(["rain", "cafe", "study", "chill", "雨", "咖啡", "学习", "放松"]):
+        return "lofi"
+    if has(["winter", "ice", "cold", "lonely", "wind", "星空", "宇宙", "寒冬", "冰", "冷", "冬", "孤独", "风"]):
         return "ambient"
     return "electronic"
 
@@ -1290,14 +1341,15 @@ def _musicpy_note_name_from_midi(midi: int) -> str:
 
 
 def _musicpy_scale_context(root_midi: int, tonality: str) -> Any:
+    if mp is None:
+        return None
     mode = str(tonality or "minor").lower()
     if mode not in {"major", "minor", "dorian"}:
         mode = "minor"
     try:
         return mp.scale(_musicpy_note_name_from_midi(root_midi), mode)
     except Exception:
-        # Strong dependency remains: import must exist. This fallback only protects
-        # unusual key/mode spellings so the renderer can still complete.
+        # musicpy present but this key/mode spelling failed; fall back to a plain minor scale.
         return mp.scale(_musicpy_note_name_from_midi(root_midi), "minor")
 
 
@@ -1390,6 +1442,9 @@ def _musicpy_generate_motif(
     profile: str,
 ) -> tuple[list[dict[str, Any]], float]:
     scale_ctx = _musicpy_scale_context(root_midi, tonality)
+    if scale_ctx is None:
+        # musicpy unavailable: let the caller fall back to the pure-Python motif generator.
+        return [], 0.0
     scale_len = max(1, len(scale))
     if profile in {"8bit", "trance"}:
         steps = [0, 2, 4, 6, 8, 10, 12, 14]
@@ -1977,11 +2032,15 @@ def _add_note(
     if "chip" in synth or "8bit" in synth or "square" in synth:
         wave_data = _bandlimited_square(freq, t, sr, harmonics=13)
         env = _adsr(length, sr, 0.004, 0.04, 0.45, 0.035)
-    elif "acid" in synth or "bass" in synth and "warm" not in synth:
+    elif "acid" in synth:
         sweep = np.exp(-t * (5.0 / max(dur_sec, 0.05))).astype(np.float32)
         wave_data = 0.60 * np.sin(2 * np.pi * freq * t).astype(np.float32) + 0.40 * _bandlimited_saw(freq, t, sr, 0.35 + 0.55 * sweep.mean())
         wave_data = np.tanh(wave_data * (1.25 + 1.2 * sweep))
         env = _adsr(length, sr, 0.006, 0.05, 0.62, 0.060)
+    elif "sub" in synth or ("bass" in synth and "warm" not in synth):
+        # Clean sub bass: mostly sine with a touch of 2nd harmonic, NO tanh distortion.
+        wave_data = (0.85 * np.sin(2 * np.pi * freq * t) + 0.15 * np.sin(2 * np.pi * freq * 2.0 * t)).astype(np.float32)
+        env = _adsr(length, sr, 0.008, 0.06, 0.80, 0.080)
     elif "pad" in synth or "drone" in synth:
         detune = 0.003 + 0.003 * brightness
         wave_data = (
@@ -2093,6 +2152,115 @@ def _soft_saturate(audio: np.ndarray, drive: float) -> np.ndarray:
     return (np.tanh(audio * drive) / math.tanh(drive)).astype(np.float32)
 
 
+def _fft_filter(audio: np.ndarray, sr: int, kind: str, cutoff_hz: float, width_hz: float = 120.0) -> np.ndarray:
+    """Zero-phase high/low pass via rFFT with a cosine transition band (low pre-ring).
+
+    kind: "high" keeps content above cutoff, "low" keeps content below cutoff.
+    """
+    audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+    n = len(audio)
+    if n == 0 or cutoff_hz <= 0.0:
+        return audio
+    spec = np.fft.rfft(audio.astype(np.float64))
+    freqs = np.fft.rfftfreq(n, d=1.0 / float(sr))
+    lo = max(0.0, cutoff_hz - width_hz * 0.5)
+    hi = cutoff_hz + width_hz * 0.5
+    ramp = np.clip((freqs - lo) / max(hi - lo, 1e-6), 0.0, 1.0)
+    gain_lp = 0.5 * (1.0 + np.cos(np.pi * ramp))  # 1 below cutoff, 0 above
+    mask = gain_lp if kind == "low" else (1.0 - gain_lp)
+    out = np.fft.irfft(spec * mask, n=n)
+    return out.astype(np.float32)
+
+
+def _rolling_max(x: np.ndarray, w: int) -> np.ndarray:
+    """Forward-looking sliding maximum for each window x[i:i+w]."""
+    x = np.asarray(x, dtype=np.float64).reshape(-1)
+    n = len(x)
+    w = int(max(1, w))
+    if w <= 1 or n == 0:
+        return x
+    # Van Herk/Gil-Werman max filter. Pad with -inf so end windows cover only
+    # real samples; this matters for look-ahead limiting near the clip tail.
+    pad_tail = w - 1
+    pad_block = (-(n + pad_tail)) % w
+    xp = np.concatenate([x, np.full(pad_tail + pad_block, -np.inf)])
+    blocks = xp.reshape(-1, w)
+    fwd = np.maximum.accumulate(blocks, axis=1).reshape(-1)
+    bwd = np.maximum.accumulate(blocks[:, ::-1], axis=1)[:, ::-1].reshape(-1)
+    return np.maximum(bwd[:n], fwd[w - 1 : w - 1 + n])
+
+
+def _release_smooth(gain: np.ndarray, sr: int, release_ms: float) -> np.ndarray:
+    """Limiter gain smoothing: instantaneous attack (gain drops at once), limited release (gain rises slowly).
+
+    Implemented on a coarse control grid (one point per `hop` samples) so the per-sample recursion stays
+    cheap even for 600 s of audio, then linearly interpolated back to full rate.
+    """
+    gain = np.asarray(gain, dtype=np.float32).reshape(-1)
+    n = len(gain)
+    if n == 0:
+        return gain
+    hop = 64
+    # Coarse grid uses the minimum gain within each hop so we never miss a transient that needs ducking.
+    pad = (-n) % hop
+    gp = np.concatenate([gain, np.full(pad, gain[-1], dtype=np.float32)]) if pad else gain
+    coarse = gp.reshape(-1, hop).min(axis=1)
+    # Per-grid-point release coefficient (attack is instant -> just take the new value when it is lower).
+    a = math.exp(-float(hop) / max(1.0, float(sr) * release_ms / 1000.0))
+    out_c = coarse.copy()
+    prev = coarse[0]
+    for i in range(len(coarse)):
+        cur = coarse[i]
+        prev = cur if cur < prev else a * prev + (1.0 - a) * cur
+        out_c[i] = prev
+    # Interpolate the coarse envelope back to per-sample resolution.
+    grid_x = np.arange(len(out_c), dtype=np.float64) * hop
+    full_x = np.arange(n, dtype=np.float64)
+    return np.interp(full_x, grid_x, out_c).astype(np.float32)
+
+
+def _limiter(audio: np.ndarray, sr: int, ceiling: float = 0.95, lookahead_ms: float = 5.0, release_ms: float = 80.0) -> np.ndarray:
+    """Look-ahead peak limiter. Brings peaks down to `ceiling` without destroying transients."""
+    audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+    n = len(audio)
+    if n == 0:
+        return audio
+    ceiling = max(1e-6, min(1.0, float(ceiling)))
+    la = max(1, int(sr * lookahead_ms / 1000.0))
+    absx = np.abs(audio).astype(np.float64)
+    peak = _rolling_max(absx, la)
+    need = np.where(peak > ceiling, ceiling / np.maximum(peak, 1e-9), 1.0)
+    gain = _release_smooth(need.astype(np.float32), sr, release_ms)
+    out = (audio * gain).astype(np.float32)
+    peak_out = float(np.max(np.abs(out))) if len(out) else 0.0
+    if peak_out > ceiling:
+        out *= ceiling / max(peak_out, 1e-9)
+    return out.astype(np.float32)
+
+
+def _master_bus(audio: np.ndarray, sr: int, params: dict[str, Any]) -> np.ndarray:
+    """Single shared mastering chain for both the fixed and AI render paths.
+
+    Optional style low-pass -> gentle pre-limiter saturation -> make-up gain -> look-ahead limiter -> safety clip.
+    Replaces the old "sum then divide by peak" approach that made output quiet yet still transient-clippy.
+    """
+    audio = np.nan_to_num(np.asarray(audio, dtype=np.float32).reshape(-1), nan=0.0, posinf=0.0, neginf=0.0)
+    if len(audio) == 0:
+        return np.zeros(sr, dtype=np.float32)
+    lowpass_hz = params.get("lowpass_hz")
+    if lowpass_hz:
+        audio = _fft_filter(audio, sr, "low", float(lowpass_hz), width_hz=400.0)
+    audio = _soft_saturate(audio, float(params.get("sat_drive", 0.8)))
+    audio = audio * float(params.get("pre_gain", 1.0))
+    audio = _limiter(
+        audio,
+        sr,
+        ceiling=float(params.get("ceiling", 0.95)),
+        release_ms=float(params.get("release_ms", 80.0)),
+    )
+    return np.clip(audio, -1.0, 1.0).astype(np.float32)
+
+
 def _sidechain_envelope(length: int, sr: int, kick_times: list[float], amount: float, release_sec: float) -> np.ndarray:
     env = np.ones(length, dtype=np.float32)
     if amount <= 0.0:
@@ -2149,14 +2317,17 @@ def _make_loopable(audio: np.ndarray, sr: int) -> np.ndarray:
     return audio
 
 
-def _write_wav(path: Path, audio: np.ndarray, sample_rate: int, target_peak: float = 0.92) -> None:
+def _write_wav(path: Path, audio: np.ndarray, sample_rate: int, target_peak: float = 0.92, already_mastered: bool = False) -> None:
     audio = np.asarray(audio, dtype=np.float32).reshape(-1)
     audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
     if len(audio) == 0:
         audio = np.zeros(sample_rate, dtype=np.float32)
-    peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
-    if peak > 1e-6:
-        audio = audio / peak * float(target_peak)
+    if not already_mastered:
+        # Legacy path: bare peak normalization. Skip when the signal already went through _master_bus,
+        # otherwise this would scale the limiter's output back down and re-introduce the "quiet but clippy" problem.
+        peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
+        if peak > 1e-6:
+            audio = audio / peak * float(target_peak)
     pcm16 = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16)
     path.parent.mkdir(parents=True, exist_ok=True)
     with wave.open(str(path), "wb") as wf:
@@ -2187,6 +2358,7 @@ class PythonMusicRenderer:
         duration = _safe_int(spec.duration, DEFAULT_DURATION, 5, HARD_MAX_SECONDS)
         n = int(duration * sample_rate)
         music = np.zeros(n, dtype=np.float32)
+        bass_buf = np.zeros(n, dtype=np.float32)
         drums = np.zeros(n, dtype=np.float32)
         texture = np.zeros(n, dtype=np.float32)
         composer = plan.composer or _default_plan(spec, diversity_level).composer
@@ -2217,7 +2389,7 @@ class PythonMusicRenderer:
         kick_times: list[float] = []
 
         self._render_harmony(music, spec, plan, composer, root, scale, sample_rate, total_bars, step_sec, chord_gain, brightness, rng)
-        self._render_bass(music, spec, composer, root, scale, sample_rate, total_bars, step_sec, bass_gain, brightness, profile, rng)
+        self._render_bass(bass_buf, spec, composer, root, scale, sample_rate, total_bars, step_sec, bass_gain, brightness, profile, rng)
         self._render_melody(
             music,
             spec,
@@ -2241,23 +2413,38 @@ class PythonMusicRenderer:
         if plan.effects.get("riser", True):
             self._render_transitions(texture, composer, sample_rate, duration, step_sec, texture_gain, profile, rng)
 
+        params = _master_params_for(profile)
+
+        # Clear sub-bass mud from the non-bass layers so only the dedicated bass owns the low end.
+        music = _fft_filter(music, sample_rate, "high", float(params["hp_nonbass_hz"]), width_hz=30.0)
+
         if plan.effects.get("sidechain", True):
             amount = _safe_float(automation.get("sidechain_amount"), 0.22, 0.0, 0.65)
             duck = _sidechain_envelope(n, sample_rate, kick_times, amount, release_sec=0.30 * beat_sec)
             music *= duck
             texture *= np.maximum(duck, 0.82)
+            bass_buf *= np.maximum(duck, 0.88)  # bass ducks lightly so low-end energy stays
 
-        if plan.effects.get("delay", True):
-            music = _delay(music, sample_rate, bpm, wet=_safe_float(mix.get("delay_wet"), 0.14, 0.0, 0.45), feedback=0.33, dotted=profile in {"trance", "ambient", "synthwave"})
-        if plan.effects.get("reverb", True):
-            music = _reverb(music, sample_rate, wet=_safe_float(mix.get("reverb_wet"), 0.22, 0.0, 0.65))
-            texture = _reverb(texture, sample_rate, wet=min(0.50, _safe_float(mix.get("reverb_wet"), 0.22, 0.0, 0.65) + 0.12))
-        combined = music + drums + texture
-        if plan.effects.get("lowpass", False) or profile in {"lofi", "ambient"}:
-            window = 3 if profile != "lofi" else 5
-            combined = 0.74 * combined + 0.26 * _moving_average(combined, window)
-        combined = _soft_saturate(combined, _safe_float(mix.get("soft_saturation_drive"), 1.45, 0.5, 3.0))
-        # Avoid hard digital start/end clicks even when the music is not loopable.
+        # Delay/reverb operate on a high-passed wet send only: bass and kick never enter the wet bus,
+        # which is what kept the old mix muddy. _delay/_reverb return dry+taps, so (processed - send) is the pure wet tail.
+        if plan.effects.get("delay", True) or plan.effects.get("reverb", True):
+            send = _fft_filter(music, sample_rate, "high", float(params["reverb_send_hp_hz"]), width_hz=120.0)
+            wet = np.zeros(n, dtype=np.float32)
+            if plan.effects.get("delay", True):
+                delayed = _delay(send, sample_rate, bpm, wet=_safe_float(mix.get("delay_wet"), 0.14, 0.0, 0.45), feedback=0.33, dotted=profile in {"trance", "ambient", "synthwave"})
+                wet = wet + (delayed - send)
+            if plan.effects.get("reverb", True):
+                reverb_wet = _safe_float(mix.get("reverb_wet"), 0.22, 0.0, 0.65)
+                reverbed = _reverb(send, sample_rate, wet=reverb_wet)
+                wet = wet + (reverbed - send)
+                tex_reverbed = _reverb(texture, sample_rate, wet=min(0.50, reverb_wet + 0.12))
+                texture = tex_reverbed
+            music = music + wet
+
+        combined = music + bass_buf + drums + texture
+        combined = _master_bus(combined, sample_rate, params)
+        # Avoid hard digital start/end clicks even when the music is not loopable. Done after mastering
+        # so the limiter does not pull the fades back up.
         fade = min(int(0.018 * sample_rate), n // 20)
         if fade > 8:
             ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
@@ -2265,7 +2452,7 @@ class PythonMusicRenderer:
             combined[-fade:] *= ramp[::-1]
         if spec.loopable:
             combined = _make_loopable(combined, sample_rate)
-        _write_wav(wav_path, combined, sample_rate, _safe_float(plan.master.get("target_peak"), 0.92, 0.3, 0.98))
+        _write_wav(wav_path, combined, sample_rate, already_mastered=True)
 
     def _render_harmony(
         self,
@@ -2699,6 +2886,8 @@ class PyMusicPlugin(Star):
         plan = _default_plan(spec, diversity_level, composer)
         wav_path = self.data_dir / f"pymusic_{int(time.time())}_{random.randint(1000, 9999)}.wav"
         sample_rate = self._sample_rate()
+        composer_dict = _composer_to_dict(composer)
+        ai_profile = str(composer_dict.get("style_profile") or _profile_name_from_text(spec.mood))
         ai_code = await self._build_python_renderer_code(
             brief,
             event,
@@ -2710,7 +2899,7 @@ class PyMusicPlugin(Star):
         )
         if ai_code:
             try:
-                await asyncio.to_thread(self._run_ai_python_renderer, ai_code, wav_path, spec.duration, sample_rate, spec.loopable)
+                await asyncio.to_thread(self._run_ai_python_renderer, ai_code, wav_path, spec.duration, sample_rate, spec.loopable, ai_profile)
             except Exception as exc:
                 render_error = _format_exception(exc)
                 logger.warning(f"[pymusic] AI Python renderer failed, trying one repair: {render_error}")
@@ -2733,6 +2922,7 @@ class PyMusicPlugin(Star):
                             spec.duration,
                             sample_rate,
                             spec.loopable,
+                            ai_profile,
                         )
                     except Exception as retry_exc:
                         logger.warning(
@@ -2981,10 +3171,11 @@ class PyMusicPlugin(Star):
             logger.warning(f"[pymusic] AI Python repair failed, using fixed renderer fallback: {_format_exception(exc)}")
             return None
 
-    def _run_ai_python_renderer(self, code: str, wav_path: Path, duration: int, sample_rate: int, loopable: bool) -> None:
+    def _run_ai_python_renderer(self, code: str, wav_path: Path, duration: int, sample_rate: int, loopable: bool, profile: str = "electronic") -> None:
         _validate_generated_python(code)
         code_path = self.data_dir / f"pymusic_code_{int(time.time())}_{random.randint(1000, 9999)}.py"
         code_path.write_text(code, encoding="utf-8")
+        raw_path = wav_path.with_suffix(".f32")
         runner = r'''
 import math
 import random
@@ -2992,7 +3183,10 @@ import sys
 import wave
 from pathlib import Path
 
-import musicpy as mp
+try:
+    import musicpy as mp
+except Exception:
+    mp = None
 import numpy as np
 
 code_path = Path(sys.argv[1])
@@ -3001,7 +3195,9 @@ duration = int(sys.argv[3])
 sample_rate = int(sys.argv[4])
 loopable = sys.argv[5] == "1"
 source = code_path.read_text(encoding="utf-8")
-allowed_modules = {"numpy": np, "math": math, "random": random, "musicpy": mp}
+allowed_modules = {"numpy": np, "math": math, "random": random}
+if mp is not None:
+    allowed_modules["musicpy"] = mp
 blocked_module_parts = {"ctypeslib", "lib", "testing", "distutils", "f2py"}
 
 
@@ -3016,7 +3212,7 @@ def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
         return math
     if root == "random":
         return random
-    if root == "musicpy":
+    if root == "musicpy" and mp is not None:
         return mp
     raise ImportError(f"import not allowed: {name}")
 
@@ -3173,16 +3369,12 @@ if len(audio) < target:
 elif len(audio) > target:
     audio = audio[:target]
 audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
-peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
-if peak > 1.0:
-    audio = audio / peak * 0.95
-pcm16 = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16)
+# Return RAW float32 samples (no normalize, no WAV). The host applies the shared _master_bus so the AI
+# path and the fixed renderer get identical mastering; pre-quantizing here would destroy the transients
+# the limiter needs to see.
 out_path.parent.mkdir(parents=True, exist_ok=True)
-with wave.open(str(out_path), "wb") as wf:
-    wf.setnchannels(1)
-    wf.setsampwidth(2)
-    wf.setframerate(sample_rate)
-    wf.writeframes(pcm16.tobytes())
+with open(str(out_path), "wb") as f:
+    f.write(audio.astype(np.float32).tobytes())
 '''
         timeout = max(20, min(180, int(duration / 2) + 20))
         try:
@@ -3192,7 +3384,7 @@ with wave.open(str(out_path), "wb") as wf:
                     "-c",
                     runner,
                     str(code_path),
-                    str(wav_path),
+                    str(raw_path),
                     str(duration),
                     str(sample_rate),
                     "1" if loopable else "0",
@@ -3204,8 +3396,24 @@ with wave.open(str(out_path), "wb") as wf:
             if result.returncode != 0:
                 detail = (result.stderr or result.stdout or "unknown AI renderer error").strip()[-1000:]
                 raise RuntimeError(detail)
+            if not raw_path.exists() or raw_path.stat().st_size < 4:
+                raise RuntimeError("AI renderer produced no audio samples")
+            # Host-side mastering: read the raw float32 the subprocess returned, run the SAME mastering
+            # chain as the fixed renderer, then write the WAV. This is what keeps both paths consistent.
+            raw = np.frombuffer(raw_path.read_bytes(), dtype=np.float32).copy()
+            params = _master_params_for(profile)
+            mastered = _master_bus(raw, sample_rate, params)
+            fade = min(int(0.018 * sample_rate), len(mastered) // 20)
+            if fade > 8:
+                ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+                mastered[:fade] *= ramp
+                mastered[-fade:] *= ramp[::-1]
+            if loopable:
+                mastered = _make_loopable(mastered, sample_rate)
+            _write_wav(wav_path, mastered, sample_rate, already_mastered=True)
         finally:
             code_path.unlink(missing_ok=True)
+            raw_path.unlink(missing_ok=True)
 
     async def _build_plan(
         self,
