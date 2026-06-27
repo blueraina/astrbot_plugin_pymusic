@@ -906,10 +906,38 @@ def _extract_json(text: str) -> dict[str, Any] | None:
 
 
 def _extract_python_code(text: str) -> str:
-    text = text.strip()
+    text = str(text or "").strip().lstrip("\ufeff")
+    if not text:
+        return ""
+    data = _extract_json(text)
+    if data:
+        for key in ("code", "python", "source"):
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                text = value.strip()
+                break
     fenced = re.search(r"```(?:python|py)?\s*(.*?)\s*```", text, re.S | re.I)
     if fenced:
         text = fenced.group(1).strip()
+    else:
+        lines = text.splitlines()
+        start = 0
+        for index, line in enumerate(lines):
+            stripped = line.lstrip()
+            if stripped.startswith(("import ", "from ", "def ", "class ", "#")):
+                start = index
+                break
+        text = "\n".join(lines[start:]).strip()
+    if "\\n" in text and "\n" not in text and ("def " in text or "import " in text):
+        try:
+            decoded = bytes(text, "utf-8").decode("unicode_escape")
+            if "def " in decoded:
+                text = decoded
+        except Exception:
+            pass
+    text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    text = re.sub(r"^```(?:python|py)?\s*", "", text, flags=re.I).strip()
+    text = re.sub(r"\s*```$", "", text).strip()
     return text
 
 
@@ -2555,7 +2583,7 @@ def _event_plain_result(event: AstrMessageEvent, text: str) -> Any:
     "astrbot_plugin_pymusic",
     "Lenovo",
     "Generate structured pure-Python WAV electronic music from prompts and send it to QQ chats.",
-    "v0.4.3",
+    "v0.4.4",
     repo="https://github.com/blueraina/astrbot_plugin_pymusic",
 )
 class PyMusicPlugin(Star):
@@ -2823,8 +2851,10 @@ class PyMusicPlugin(Star):
             "Never import, reference, or use the identifier name wave; the host plugin writes the returned audio array to a WAV file after render() finishes. "
             "Do not call wave.open or any file-writing API. Use variable names like audio, signal, osc, layer, or buffer instead of wave. "
             "Do not use os, sys, subprocess, pathlib, sockets, network, eval, exec, open, __import__, external samples, or any music-generation API. "
-            "Every note/sample/layer insertion must be bounds-checked and clipped to the target array before adding. "
-            "If a start index is outside the target, skip it; if it is negative, crop the source; always compute end = min(len(target), start + len(source)) and return when end <= start. "
+            "The sandbox provides safe_add(target,start,source,gain=1.0), safe_assign(target,start,source), safe_min_assign(target,start,source), and safe_multiply(target,start,source). "
+            "Use these host-provided helpers for every partial array write: notes, drum hits, delay taps, reverb tails, sidechain envelopes, filter/automation segments, risers, downlifters, fills, and texture layers. "
+            "Never do target[start:end] += source, target[start:end] = source, np.minimum(target[start:end], source), or target[start:end] *= source directly unless start/end are known to cover the full array. "
+            "Do not use backslash line continuations; wrap long expressions in parentheses. "
             "Use the provided composition_blueprint / structured_composer_plan as the composition source of truth. Do not invent a single short melody array inside render and loop it unchanged. "
             "Implement the plan's section timeline, chord progression, call motif, response motif, B variation, bass pattern, drum steps, fills, and automation. "
             "Use variation_seed and variation_strength to create a distinct realization when the same short prompt is requested repeatedly. "
@@ -2867,8 +2897,11 @@ class PyMusicPlugin(Star):
                 "implementation_notes": [
                     "Do not import or reference wave. render() must only return a numpy audio array; the host plugin handles WAV encoding and file writing.",
                     "Avoid using wave as a variable name because it is reserved by the sandbox validator; use audio, signal, osc, layer, or buffer.",
-                    "All helper functions that add notes, drum hits, delay taps, samples, or layers into an output array must clip indices to array bounds before addition.",
-                    "A safe insertion helper should skip idx >= len(target), crop negative idx, use end_idx = min(len(target), idx + len(source)), and return if end_idx <= idx.",
+                    "Use host-provided safe_add for note/drum/delay/reverb/texture/riser additions.",
+                    "Use host-provided safe_min_assign for sidechain ducking envelopes or any np.minimum-style gain writes.",
+                    "Use host-provided safe_assign or safe_multiply for partial automation/filter/gain segments.",
+                    "Do not write target[start:end] += source or target[start:end] = np.minimum(...) directly for partial segments.",
+                    "Do not use backslash line continuations; use parentheses for multi-line expressions.",
                     "Use composition_blueprint.motifs.call / response / b_variation instead of ad hoc one-array melody loops.",
                     "Use variation_seed to initialize any local random generator so repeated identical prompts can sound different when variation_strength > 0.",
                     "Use variation_strength as a musical control, not just a random noise amount: higher values should alter phrase contour, fills, accents, automation and transitions more clearly.",
@@ -2910,10 +2943,12 @@ class PyMusicPlugin(Star):
             "Never import, reference, or use the identifier name wave; the host plugin writes the returned array to WAV. "
             "Do not use os, sys, subprocess, pathlib, sockets, network, eval, exec, open, __import__, external samples, or any music-generation API. "
             "Fix the reported runtime error while preserving the musical intent and composition_blueprint. "
-            "Critical array safety rule: every helper that inserts notes, drum hits, delay taps, samples, or layers into an output array must clip indices before adding. "
-            "Use a safe pattern: start = int(start); if start >= len(target): return; if start < 0 crop source and set start=0; "
-            "end = min(len(target), start + len(source)); if end <= start: return; target[start:end] += source[:end-start]. "
-            "Avoid numpy broadcasting errors from empty target slices, negative indices, or events scheduled past the end of the clip."
+            "The sandbox provides safe_add(target,start,source,gain=1.0), safe_assign(target,start,source), safe_min_assign(target,start,source), and safe_multiply(target,start,source). "
+            "Use these helpers for every partial write: notes, drum hits, delay taps, reverb tails, sidechain envelopes, automation/filter/gain segments, risers, downlifters, fills, and texture layers. "
+            "Replace direct empty-slice-prone code such as target[start:end] += source, target[start:end] = source, target[start:end] = np.minimum(...), or target[start:end] *= source with the helpers. "
+            "For sidechain or ducking gain envelopes specifically, use safe_min_assign(sc_gain, trigger_idx, sc_envelope). "
+            "Avoid numpy broadcasting errors from empty target slices, negative indices, or events scheduled past the end of the clip. "
+            "Do not use backslash line continuations; wrap long expressions in parentheses."
         )
         user_prompt = json.dumps(
             {
@@ -2928,9 +2963,12 @@ class PyMusicPlugin(Star):
                     "Return full corrected code, not a diff.",
                     "Keep render(duration, sample_rate, loopable).",
                     "Do not import or reference wave.",
-                    "Bounds-check every array insertion before target[start:end] += source.",
-                    "Skip events with start index outside the audio length.",
-                    "Clamp/crop all delayed echoes, drum hits, fills, tails, and section-transition FX near the end of the clip.",
+                    "Use safe_add for note, drum, delay, reverb, riser, downlifter, fill and texture additions.",
+                    "Use safe_min_assign for sidechain ducking envelopes and np.minimum-style partial writes.",
+                    "Use safe_assign or safe_multiply for automation, filter and gain segments.",
+                    "Remove direct partial writes like target[start:end] += source or sc_gain[start:end] = np.minimum(...).",
+                    "Clamp/crop all delayed echoes, drum hits, fills, tails and section-transition FX near the end of the clip via the safe helpers.",
+                    "Do not use backslash line continuations.",
                 ],
             },
             ensure_ascii=False,
@@ -3005,7 +3043,73 @@ safe_builtins = {
     "all": all,
     "any": any,
 }
-env = {"__builtins__": safe_builtins, "np": np, "math": math, "random": random}
+
+
+def _safe_slice(target, start, source):
+    target = np.asarray(target)
+    source = np.asarray(source, dtype=np.float32).reshape(-1)
+    if len(target) == 0 or len(source) == 0:
+        return None
+    start = int(start)
+    if start >= len(target):
+        return None
+    if start < 0:
+        source = source[-start:]
+        start = 0
+        if len(source) == 0:
+            return None
+    end = min(len(target), start + len(source))
+    if end <= start:
+        return None
+    return start, end, source[: end - start]
+
+
+def safe_add(target, start, source, gain=1.0):
+    clipped = _safe_slice(target, start, source)
+    if clipped is None:
+        return target
+    start, end, source = clipped
+    target[start:end] += source * float(gain)
+    return target
+
+
+def safe_assign(target, start, source):
+    clipped = _safe_slice(target, start, source)
+    if clipped is None:
+        return target
+    start, end, source = clipped
+    target[start:end] = source
+    return target
+
+
+def safe_min_assign(target, start, source):
+    clipped = _safe_slice(target, start, source)
+    if clipped is None:
+        return target
+    start, end, source = clipped
+    target[start:end] = np.minimum(target[start:end], source)
+    return target
+
+
+def safe_multiply(target, start, source):
+    clipped = _safe_slice(target, start, source)
+    if clipped is None:
+        return target
+    start, end, source = clipped
+    target[start:end] *= source
+    return target
+
+
+env = {
+    "__builtins__": safe_builtins,
+    "np": np,
+    "math": math,
+    "random": random,
+    "safe_add": safe_add,
+    "safe_assign": safe_assign,
+    "safe_min_assign": safe_min_assign,
+    "safe_multiply": safe_multiply,
+}
 exec(compile(source, str(code_path), "exec"), env)
 render = env.get("render")
 if not callable(render):
