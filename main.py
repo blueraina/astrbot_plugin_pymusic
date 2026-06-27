@@ -911,6 +911,13 @@ def _extract_python_code(text: str) -> str:
     return text
 
 
+def _format_exception(exc: BaseException) -> str:
+    message = str(exc).strip()
+    if message:
+        return f"{exc.__class__.__name__}: {message}"
+    return exc.__class__.__name__
+
+
 def _validate_generated_python(source: str) -> None:
     if len(source) > 32000:
         raise ValueError("generated Python code is too long")
@@ -2545,7 +2552,7 @@ class PyMusicPlugin(Star):
                 brief.references = list(dict.fromkeys(core + brief.references))[:12]
                 return brief
         except Exception as exc:
-            logger.warning(f"[pymusic] prompt enrichment failed, using fallback: {exc}")
+            logger.warning(f"[pymusic] prompt enrichment failed, using fallback: {_format_exception(exc)}")
         return fallback
 
     async def _build_spec(
@@ -2582,7 +2589,7 @@ class PyMusicPlugin(Star):
             if data:
                 return _spec_from_dict(data, fallback, self._max_duration())
         except Exception as exc:
-            logger.warning(f"[pymusic] MusicSpec LLM planning failed, using fallback: {exc}")
+            logger.warning(f"[pymusic] MusicSpec LLM planning failed, using fallback: {_format_exception(exc)}")
         return fallback
 
     async def _build_python_renderer_code(
@@ -2666,7 +2673,7 @@ class PyMusicPlugin(Star):
             _validate_generated_python(code)
             return code
         except Exception as exc:
-            logger.warning(f"[pymusic] AI Python code generation failed, using fixed renderer fallback: {exc}")
+            logger.warning(f"[pymusic] AI Python code generation failed, using fixed renderer fallback: {_format_exception(exc)}")
             return None
 
     def _run_ai_python_renderer(self, code: str, wav_path: Path, duration: int, sample_rate: int, loopable: bool) -> None:
@@ -2825,7 +2832,7 @@ with wave.open(str(out_path), "wb") as wf:
             if data:
                 return _plan_from_dict(data, fallback, composer_data)
         except Exception as exc:
-            logger.warning(f"[pymusic] RenderPlan LLM planning failed, using fallback: {exc}")
+            logger.warning(f"[pymusic] RenderPlan LLM planning failed, using fallback: {_format_exception(exc)}")
         return fallback
 
     async def _send_music(self, event: AstrMessageEvent, wav_path: Path, spec: MusicSpec) -> str:
@@ -2921,10 +2928,14 @@ with wave.open(str(out_path), "wb") as wf:
             return None
 
     async def _provider_text_chat(self, provider: Any, prompt: str, system_prompt: str) -> Any:
-        return await asyncio.wait_for(
-            provider.text_chat(prompt=prompt, system_prompt=system_prompt),
-            timeout=self._model_call_timeout(),
-        )
+        timeout = self._model_call_timeout()
+        try:
+            return await asyncio.wait_for(
+                provider.text_chat(prompt=prompt, system_prompt=system_prompt),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError(f"model text_chat timed out after {timeout}s") from exc
 
     def _sample_rate(self) -> int:
         return _safe_int(_cfg_get(self.config, "sample_rate", DEFAULT_SAMPLE_RATE), DEFAULT_SAMPLE_RATE, 16000, 48000)
