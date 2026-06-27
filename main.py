@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import musicpy as mp
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, register
@@ -553,6 +554,7 @@ KEY_ROOTS = {
     "bb": 70,
     "b": 71,
 }
+MUSICPY_NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11]
 MINOR_SCALE = [0, 2, 3, 5, 7, 8, 10]
 DORIAN_SCALE = [0, 2, 3, 5, 7, 9, 10]
@@ -1255,6 +1257,172 @@ def _section_defs(duration: int, loopable: bool, profile: str) -> list[tuple[str
     ]
 
 
+def _musicpy_note_name_from_midi(midi: int) -> str:
+    midi = int(midi)
+    return f"{MUSICPY_NOTE_NAMES[midi % 12]}{midi // 12 - 1}"
+
+
+def _musicpy_scale_context(root_midi: int, tonality: str) -> Any:
+    mode = str(tonality or "minor").lower()
+    if mode not in {"major", "minor", "dorian"}:
+        mode = "minor"
+    try:
+        return mp.scale(_musicpy_note_name_from_midi(root_midi), mode)
+    except Exception:
+        # Strong dependency remains: import must exist. This fallback only protects
+        # unusual key/mode spellings so the renderer can still complete.
+        return mp.scale(_musicpy_note_name_from_midi(root_midi), "minor")
+
+
+def _musicpy_midi_from_degree(scale_ctx: Any, degree: int, octave: int = 0) -> int:
+    degree = int(degree)
+    octave = int(octave)
+    note_obj = scale_ctx.get_note_from_degree(degree + 1)
+    return int(note_obj.degree + octave * 12)
+
+
+def _reflect_scale_degree(value: int, scale_len: int) -> int:
+    if scale_len <= 1:
+        return 0
+    high = scale_len - 1
+    value = int(value)
+    while value < 0 or value > high:
+        if value < 0:
+            value = -value
+        if value > high:
+            value = high - (value - high)
+    return value
+
+
+def _musicpy_melody_score(
+    motif: list[dict[str, Any]],
+    scale_ctx: Any,
+    chord_degrees: list[int],
+    profile: str,
+) -> float:
+    if not motif:
+        return -999.0
+    score = 0.0
+    midis: list[int] = []
+    degrees: list[int] = []
+    strong = {int(degree) for degree in chord_degrees}
+    for event in motif:
+        degree = int(event.get("degree", 0))
+        octave = int(event.get("octave", 0))
+        midi = _musicpy_midi_from_degree(scale_ctx, degree, octave)
+        midis.append(midi)
+        degrees.append(degree + octave * 7)
+        step = int(event.get("step", 0))
+        if step % 8 in {0, 4}:
+            score += 3.0 if degree in strong else -2.5
+        if float(event.get("length_steps", 2)) >= 3:
+            score += 0.4
+    intervals = [degrees[i + 1] - degrees[i] for i in range(len(degrees) - 1)]
+    for idx, interval in enumerate(intervals):
+        distance = abs(interval)
+        if distance == 0:
+            score -= 0.35
+        elif distance <= 2:
+            score += 1.1
+        elif distance <= 4:
+            score += 0.25
+        else:
+            score -= 2.6
+            if idx + 1 < len(intervals) and intervals[idx + 1] * interval < 0 and abs(intervals[idx + 1]) <= 2:
+                score += 2.2
+    final_degree = int(motif[-1].get("degree", 0))
+    score += 4.0 if final_degree in strong else -1.5
+    if final_degree == 0:
+        score += 1.4
+    pitch_range = max(midis) - min(midis) if midis else 0
+    if profile in {"ambient", "lofi"}:
+        score += 2.0 if 4 <= pitch_range <= 12 else -1.0
+    else:
+        score += 1.8 if 7 <= pitch_range <= 18 else -0.8
+    repeated_run = 1
+    for i in range(1, len(degrees)):
+        if degrees[i] == degrees[i - 1]:
+            repeated_run += 1
+            if repeated_run >= 3:
+                score -= 1.0
+        else:
+            repeated_run = 1
+    step_set = {int(event.get("step", 0)) for event in motif}
+    if len(step_set) != len(motif):
+        score -= 3.0
+    return score
+
+
+def _musicpy_generate_motif(
+    rng: random.Random,
+    root_midi: int,
+    scale: list[int],
+    tonality: str,
+    chord_progression: list[dict[str, Any]],
+    diversity: int,
+    profile: str,
+) -> tuple[list[dict[str, Any]], float]:
+    scale_ctx = _musicpy_scale_context(root_midi, tonality)
+    scale_len = max(1, len(scale))
+    if profile in {"8bit", "trance"}:
+        steps = [0, 2, 4, 6, 8, 10, 12, 14]
+        length_bank = [1, 2, 2, 1, 2, 2, 1, 2]
+    elif profile in {"lofi", "ambient"}:
+        steps = [0, 3, 6, 8, 11, 14]
+        length_bank = [3, 2, 2, 3, 2, 2]
+    else:
+        steps = [0, 2, 5, 7, 8, 10, 13, 14]
+        length_bank = [2, 2, 1, 1, 2, 2, 1, 2]
+    chord_degrees = [int(x) % scale_len for x in (chord_progression[0].get("scale_degrees", [0, 2, 4]) if chord_progression else [0, 2, 4])]
+    candidate_count = 12 + diversity * 8
+    best: list[dict[str, Any]] = []
+    best_score = -999.0
+    for _ in range(candidate_count):
+        current = rng.choice(chord_degrees)
+        previous_jump = 0
+        motif: list[dict[str, Any]] = []
+        direction_bias = rng.choice([-1, 1])
+        for idx, step in enumerate(steps):
+            strong = step % 8 in {0, 4}
+            if strong:
+                degree = rng.choice(chord_degrees)
+            elif previous_jump:
+                degree = current - int(math.copysign(rng.choice([1, 2]), previous_jump))
+            else:
+                if rng.random() < (0.78 if profile in {"lofi", "ambient"} else 0.65):
+                    degree = current + rng.choice([-1, 0, 1, direction_bias])
+                else:
+                    degree = current + rng.choice([-3, -2, 2, 3])
+            degree = _reflect_scale_degree(degree, scale_len)
+            jump = degree - current
+            current = degree
+            previous_jump = jump if abs(jump) >= 3 else 0
+            octave = 0
+            if profile not in {"ambient", "lofi"} and idx >= len(steps) // 2 and rng.random() < 0.55:
+                octave = 1
+            if profile == "ambient" and rng.random() < 0.30:
+                octave = rng.choice([-1, 0])
+            length = int(length_bank[idx % len(length_bank)])
+            if diversity >= 2 and not strong and rng.random() < 0.22:
+                length = max(1, min(4, length + rng.choice([-1, 1])))
+            motif.append(
+                {
+                    "step": int(step),
+                    "degree": int(degree),
+                    "octave": int(octave),
+                    "length_steps": int(length),
+                    "velocity": round(0.70 + 0.22 * (1 if strong else rng.random()), 3),
+                    "strong_chord_tone": bool(strong),
+                    "musicpy_midi": _musicpy_midi_from_degree(scale_ctx, degree, octave),
+                }
+            )
+        score = _musicpy_melody_score(motif, scale_ctx, chord_degrees, profile)
+        if score > best_score:
+            best = motif
+            best_score = score
+    return best, round(float(best_score), 3)
+
+
 def _make_motif(rng: random.Random, scale_len: int, diversity: int, profile: str) -> list[dict[str, Any]]:
     if profile in {"8bit", "trance"}:
         steps = [0, 2, 4, 6, 8, 10, 12, 14]
@@ -1423,7 +1591,18 @@ def _compose_arrangement(
         )
     section_defs = _section_defs(spec.duration, spec.loopable, profile)
     sections = _allocate_section_bars(total_bars, section_defs, spec.loopable)
-    motif_call = _make_motif(rng, len(scale), diversity_level, profile)
+    motif_call, melody_score = _musicpy_generate_motif(
+        rng,
+        root_midi,
+        scale,
+        tonality,
+        chord_progression,
+        diversity_level,
+        profile,
+    )
+    if not motif_call:
+        motif_call = _make_motif(rng, len(scale), diversity_level, profile)
+        melody_score = 0.0
     motif_response = _variant_motif(motif_call, len(scale), "response", rng)
     motif_b = _variant_motif(motif_call, len(scale), "b", rng)
     bass_steps = [0, 6, 8, 11, 14]
@@ -1503,7 +1682,11 @@ def _compose_arrangement(
             "call": motif_call,
             "response": motif_response,
             "b_variation": motif_b,
+            "planner": "musicpy_candidate_scorer",
+            "musicpy_scale": f"{_musicpy_note_name_from_midi(root_midi)} {tonality}",
+            "melody_score": melody_score,
             "development_notes": [
+                "call motif is selected from multiple musicpy-assisted melody candidates",
                 "call and response share interval material but differ in rhythm/register",
                 "B variation recombines motif cells and raises energy",
                 "phrase endings allow delay throw or stutter fill",
@@ -2372,7 +2555,7 @@ def _event_plain_result(event: AstrMessageEvent, text: str) -> Any:
     "astrbot_plugin_pymusic",
     "Lenovo",
     "Generate structured pure-Python WAV electronic music from prompts and send it to QQ chats.",
-    "v0.4.2",
+    "v0.4.3",
     repo="https://github.com/blueraina/astrbot_plugin_pymusic",
 )
 class PyMusicPlugin(Star):
