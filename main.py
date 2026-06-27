@@ -960,11 +960,6 @@ def _validate_generated_python(source: str) -> None:
         "compile",
         "input",
         "__import__",
-        "globals",
-        "locals",
-        "vars",
-        "dir",
-        "help",
         "breakpoint",
         "getattr",
         "setattr",
@@ -2583,7 +2578,7 @@ def _event_plain_result(event: AstrMessageEvent, text: str) -> Any:
     "astrbot_plugin_pymusic",
     "Lenovo",
     "Generate structured pure-Python WAV electronic music from prompts and send it to QQ chats.",
-    "v0.4.4",
+    "v0.4.5",
     repo="https://github.com/blueraina/astrbot_plugin_pymusic",
 )
 class PyMusicPlugin(Star):
@@ -3045,6 +3040,46 @@ safe_builtins = {
 }
 
 
+def _safe_runtime_view():
+    return {
+        "np": np,
+        "math": math,
+        "random": random,
+        "safe_add": safe_add,
+        "safe_assign": safe_assign,
+        "safe_min_assign": safe_min_assign,
+        "safe_multiply": safe_multiply,
+    }
+
+
+def safe_globals():
+    return _safe_runtime_view()
+
+
+def safe_locals():
+    return _safe_runtime_view()
+
+
+def safe_vars(obj=None):
+    if obj is None:
+        return _safe_runtime_view()
+    if obj in (np, math, random):
+        return {name: value for name, value in vars(obj).items() if not name.startswith("__")}
+    return {}
+
+
+def safe_dir(obj=None):
+    if obj is None:
+        return sorted(_safe_runtime_view().keys())
+    if obj in (np, math, random):
+        return sorted(name for name in dir(obj) if not name.startswith("__"))
+    return []
+
+
+def safe_help(*args, **kwargs):
+    return None
+
+
 def _safe_slice(target, start, source):
     target = np.asarray(target)
     source = np.asarray(source, dtype=np.float32).reshape(-1)
@@ -3110,6 +3145,15 @@ env = {
     "safe_min_assign": safe_min_assign,
     "safe_multiply": safe_multiply,
 }
+safe_builtins.update(
+    {
+        "globals": safe_globals,
+        "locals": safe_locals,
+        "vars": safe_vars,
+        "dir": safe_dir,
+        "help": safe_help,
+    }
+)
 exec(compile(source, str(code_path), "exec"), env)
 render = env.get("render")
 if not callable(render):
