@@ -4,19 +4,17 @@ import ast
 import asyncio
 import json
 import math
-import os
 import random
 import re
 import subprocess
 import sys
 import time
 import wave
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, register
@@ -47,6 +45,71 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         ),
     },
     {
+        "id": "micro_arrangement",
+        "category": "structure",
+        "keywords": ["30", "short", "mini", "drop", "过门", "短", "推进", "爆发"],
+        "summary": "mini electronic arrangement for short durations",
+        "basis": "electronic arrangement practice",
+        "guide": (
+            "For 15-35 second renders, still create a tiny form: identity hook, short build, mini drop/release, "
+            "and a clean ending or loop seam."
+        ),
+    },
+    {
+        "id": "call_response_theme",
+        "category": "composition",
+        "keywords": ["call", "response", "answer", "hook", "问答", "回答", "主题", "副旋律"],
+        "summary": "melodic call-response and related B phrase",
+        "basis": "common melodic development",
+        "guide": (
+            "Write a call phrase and an answer phrase that share interval DNA but differ in contour, rhythm, or register; "
+            "make the B section a developed relative, not a totally new loop."
+        ),
+    },
+    {
+        "id": "chord_tone_targeting",
+        "category": "composition",
+        "keywords": ["harmony", "chord", "strong beat", "和弦", "强拍", "和声"],
+        "summary": "strong beats land on chord tones",
+        "basis": "tonal melodic writing",
+        "guide": (
+            "Place strong-beat melody notes on root/third/fifth/seventh chord tones and use passing/neighbor tones "
+            "on weak subdivisions for more intentional phrasing."
+        ),
+    },
+    {
+        "id": "bass_kick_lock",
+        "category": "composition",
+        "keywords": ["bass", "kick", "groove", "贝斯", "底鼓", "律动"],
+        "summary": "bassline interacts with kick and harmony",
+        "basis": "electronic dance production practice",
+        "guide": (
+            "Coordinate bass notes with kick spaces: leave room for the kick transient, answer it with offbeat notes, "
+            "use roots/fifths/octaves plus occasional approach tones and accents."
+        ),
+    },
+    {
+        "id": "sidechain_ducking",
+        "category": "effect",
+        "keywords": ["sidechain", "duck", "pump", "house", "techno", "侧链", "抽吸", "泵感"],
+        "summary": "kick-triggered gain ducking",
+        "basis": "electronic mixing practice",
+        "guide": (
+            "Duck pads, bass sustain, and effects after kicks to create movement and make drums sit clearly; "
+            "keep the amount style-dependent."
+        ),
+    },
+    {
+        "id": "riser_downlifter",
+        "category": "effect",
+        "keywords": ["riser", "drop", "transition", "build", "上升", "下坠", "过门", "爆发"],
+        "summary": "transition FX for build and release",
+        "basis": "electronic production practice",
+        "guide": (
+            "Use filtered noise risers, downlifters, reverse-like sweeps, short fills, and delay throws before section changes."
+        ),
+    },
+    {
         "id": "ambient_pad",
         "category": "style",
         "keywords": ["ambient", "pad", "drone", "space", "cold", "winter", "星空", "宇宙", "寒冬", "冰", "空灵", "氛围"],
@@ -58,14 +121,24 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         ),
     },
     {
+        "id": "ambient_techno",
+        "category": "style",
+        "keywords": ["ambient techno", "dub techno", "氛围科技", "极简", "深空"],
+        "summary": "atmospheric techno pulse with evolving pads",
+        "basis": "ambient techno production practice",
+        "guide": (
+            "Combine soft four-on-floor or broken pulses with evolving pads, filtered chord stabs, dubby delay, and restrained bass movement."
+        ),
+    },
+    {
         "id": "8bit_chiptune",
         "category": "style",
         "keywords": ["8bit", "chiptune", "chip", "pixel", "game", "arcade", "像素", "游戏", "复古"],
-        "summary": "chip lead, pulse bass, and noise drums",
+        "summary": "chip lead, pulse bass, counter melody, and noise drums",
         "basis": "chiptune synthesis practice",
         "guide": (
-            "Use square/pulse/triangle oscillators, short envelopes, arpeggio or counter-melody writing, "
-            "noise kick/snare/hat, and playful register changes."
+            "Use square/pulse/triangle oscillators, pingpong arps, a related counter melody, noise kick/snare/hat, "
+            "short envelopes, and playful register changes without harsh constant high notes."
         ),
     },
     {
@@ -77,6 +150,67 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "guide": (
             "Use warm keys or soft plucks, 7th/9th-flavored harmony, lazy swung drums, mellow bass, vinyl/tape noise, "
             "lowpass color, and small timing/level imperfections."
+        ),
+    },
+    {
+        "id": "melodic_techno",
+        "category": "style",
+        "keywords": ["melodic techno", "techno", "progressive", "night", "dark", "旋律科技", "夜店", "黑暗", "地下"],
+        "summary": "minor hook, rolling bass, hypnotic drums, and automation",
+        "basis": "melodic techno production practice",
+        "guide": (
+            "Use a memorable minor hook, rolling offbeat bass, syncopated hats, filter automation, a short build, and a clear drop/release."
+        ),
+    },
+    {
+        "id": "synthwave",
+        "category": "style",
+        "keywords": ["synthwave", "retro", "neon", "80s", "霓虹", "复古未来", "赛博"],
+        "summary": "retro electronic drums, warm pads, and heroic lead",
+        "basis": "synthwave production practice",
+        "guide": (
+            "Use warm analog-like pads, octave bass, gated or roomy drums, chorus-like detune, and a singable neon lead motif."
+        ),
+    },
+    {
+        "id": "trance",
+        "category": "style",
+        "keywords": ["trance", "uplift", "rave", "anthem", "迷幻", "锐舞", "高能"],
+        "summary": "arpeggiated harmony, supersaw-like lead, and build/drop",
+        "basis": "trance production practice",
+        "guide": (
+            "Use arpeggiated chord tones, a bright but controlled lead, tension risers, snare/hat density ramps, and euphoric release."
+        ),
+    },
+    {
+        "id": "house_groove",
+        "category": "style",
+        "keywords": ["house", "club", "dance", "deep", "funky", "浩室", "舞曲"],
+        "summary": "four-on-floor groove with offbeat bass and chord stabs",
+        "basis": "house production practice",
+        "guide": (
+            "Use four-on-floor kick, offbeat hats, syncopated bass, short chord stabs, call-response hook, and moderate sidechain."
+        ),
+    },
+    {
+        "id": "breakbeat",
+        "category": "style",
+        "keywords": ["breakbeat", "breaks", "drum", "idm", "碎拍", "鼓组", "故障"],
+        "summary": "broken drums, ghost notes, and glitchy fills",
+        "basis": "breakbeat production practice",
+        "guide": (
+            "Use broken kick/snare placement, ghost hats, syncopated bass, short stutters before phrase ends, and call-response lead fragments."
+        ),
+    },
+    {
+        "id": "acid_bass",
+        "category": "style",
+        "keywords": ["acid", "cyber", "techno", "rave", "dark", "赛博", "地下", "紧张", "黑暗"],
+        "summary": "acid/electro bass movement",
+        "basis": "acid/electro synthesis practice",
+        "guide": (
+            "Use a saw or square bassline with accents, slides or octave jumps, resonant-filter-like brightness motion, "
+            "four-on-floor or broken electronic drums, and evolving automation."
         ),
     },
     {
@@ -97,8 +231,8 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "summary": "Markov-style phrase continuation",
         "basis": "Pachet 2003",
         "guide": (
-            "Generate a first motif, then choose following notes from small transition rules based on the previous "
-            "degree or interval so the answer phrase feels related without copying the same loop."
+            "Generate a first motif, then choose following notes from small transition rules based on the previous degree or interval "
+            "so the answer phrase feels related without copying the same loop."
         ),
     },
     {
@@ -108,8 +242,8 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "summary": "motif recombination and controlled reuse",
         "basis": "Variable Markov Oracle practice",
         "guide": (
-            "Create short motif cells, then recombine, invert, transpose, stretch, or truncate them for B phrases and "
-            "fills so repetition has memory and development."
+            "Create short motif cells, then recombine, invert, transpose, stretch, or truncate them for B phrases and fills "
+            "so repetition has memory and development."
         ),
     },
     {
@@ -119,8 +253,8 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "summary": "rule-expanded phrase growth",
         "basis": "Prusinkiewicz 1986",
         "guide": (
-            "Start from a compact symbol phrase and apply 1-3 simple rewrite rules to create longer note or rhythm "
-            "sequences, then map symbols to scale degrees, rests, or register shifts."
+            "Start from a compact symbol phrase and apply 1-3 simple rewrite rules to create longer note or rhythm sequences, "
+            "then map symbols to scale degrees, rests, or register shifts."
         ),
     },
     {
@@ -130,8 +264,8 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "summary": "forward-backward arpeggio motion",
         "basis": "algorithmic pattern practice",
         "guide": (
-            "Walk chord tones forward then backward, rotate the start point between bars, and answer the lead or bass "
-            "rhythm so arpeggios feel intentional instead of mechanical."
+            "Walk chord tones forward then backward, rotate the start point between bars, and answer the lead or bass rhythm "
+            "so arpeggios feel intentional instead of mechanical."
         ),
     },
     {
@@ -141,8 +275,7 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "summary": "bounded random-walk melodic motion",
         "basis": "algorithmic composition practice",
         "guide": (
-            "Move through a scale with mostly stepwise intervals, occasional leaps, and reflection at register bounds; "
-            "anchor important beats on chord tones."
+            "Move through a scale with mostly stepwise intervals, occasional leaps, and reflection at register bounds; anchor important beats on chord tones."
         ),
     },
     {
@@ -152,8 +285,7 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "summary": "short repeats and glitch fills",
         "basis": "electronic pattern practice",
         "guide": (
-            "Repeat tiny note or drum fragments near phrase ends, with quick gates or rests, to create fills without "
-            "making the main groove chaotic."
+            "Repeat tiny note or drum fragments near phrase ends, with quick gates or rests, to create fills without making the main groove chaotic."
         ),
     },
     {
@@ -163,8 +295,7 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "summary": "slowly shifting repeated pattern",
         "basis": "minimal/process music practice",
         "guide": (
-            "Layer two related patterns of slightly different lengths or accents, then let their alignment drift over "
-            "bars for evolving minimal electronic motion."
+            "Layer two related patterns of slightly different lengths or accents, then let their alignment drift over bars for evolving minimal electronic motion."
         ),
     },
     {
@@ -174,19 +305,7 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "summary": "FM bell, bass, and metallic tone color",
         "basis": "Chowning 1973",
         "guide": (
-            "Use carrier plus modulator oscillators, with an envelope on modulation index, for glassy bells, icy plucks, "
-            "metallic hits, or expressive FM bass timbre."
-        ),
-    },
-    {
-        "id": "acid_bass",
-        "category": "style",
-        "keywords": ["acid", "cyber", "techno", "rave", "dark", "赛博", "地下", "紧张", "黑暗"],
-        "summary": "acid/electro bass movement",
-        "basis": "acid/electro synthesis practice",
-        "guide": (
-            "Use a saw or square bassline with accents, slides or octave jumps, resonant-filter-like brightness motion, "
-            "four-on-floor or broken electronic drums, and evolving automation."
+            "Use carrier plus modulator oscillators, with an envelope on modulation index, for glassy bells, icy plucks, metallic hits, or expressive FM bass timbre."
         ),
     },
     {
@@ -196,8 +315,7 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "summary": "controlled noise and texture layer",
         "basis": "computer music noise synthesis",
         "guide": (
-            "Use filtered noise for wind, rain, vinyl, tape hiss, risers, or soft percussion, with envelopes and volume "
-            "automation so texture supports the music instead of masking it."
+            "Use filtered noise for wind, rain, vinyl, tape hiss, risers, or soft percussion, with envelopes and volume automation so texture supports the music."
         ),
     },
     {
@@ -207,8 +325,7 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "summary": "pluck or string-like synthesis",
         "basis": "Karplus-Strong 1983",
         "guide": (
-            "Use short noise bursts, decaying resonant or comb-like tones, or bright pluck envelopes for guitar/harp-like "
-            "parts, then vary pitch and decay across phrases."
+            "Use short noise bursts, decaying resonant or comb-like tones, or bright pluck envelopes for guitar/harp-like parts, then vary pitch and decay across phrases."
         ),
     },
     {
@@ -218,8 +335,7 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "summary": "less harsh saw-like waveform",
         "basis": "Stilson and Smith 1996",
         "guide": (
-            "Approximate a band-limited saw by summing only harmonics below Nyquist or by softening a naive saw with "
-            "lowpass-style shaping, especially for bright leads and bass."
+            "Approximate a band-limited saw by summing only harmonics below Nyquist or by softening a naive saw with lowpass-style shaping."
         ),
     },
     {
@@ -229,8 +345,7 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "summary": "less harsh square or pulse waveform",
         "basis": "Stilson and Smith 1996",
         "guide": (
-            "Approximate square or pulse waves with odd harmonics below Nyquist, optional PWM motion, and short envelopes "
-            "so chip leads stay bright without excessive aliasing."
+            "Approximate square or pulse waves with odd harmonics below Nyquist, optional PWM motion, and short envelopes so chip leads stay bright without excessive aliasing."
         ),
     },
     {
@@ -240,8 +355,7 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "summary": "layered additive pad partials",
         "basis": "additive synthesis practice",
         "guide": (
-            "Combine several low-amplitude partials, slow detune/LFO movement, and long envelopes for a pad that evolves "
-            "without needing samples."
+            "Combine several low-amplitude partials, slow detune/LFO movement, and long envelopes for a pad that evolves without needing samples."
         ),
     },
     {
@@ -251,8 +365,7 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "summary": "subtractive bass with envelope-shaped brightness",
         "basis": "subtractive synthesis practice",
         "guide": (
-            "Start with saw/square/triangle bass, then simulate filter envelope by changing harmonic mix or lowpass-like "
-            "brightness over each note."
+            "Start with saw/square/triangle bass, then simulate filter envelope by changing harmonic mix or lowpass-like brightness over each note."
         ),
     },
     {
@@ -262,8 +375,7 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "summary": "noise-based synthetic percussion",
         "basis": "Karplus-Strong/noise percussion practice",
         "guide": (
-            "Shape filtered noise and short sine sweeps into kick, snare, hat, click, or tom sounds, with different "
-            "decay times and accents."
+            "Shape filtered noise and short sine sweeps into kick, snare, hat, click, or tom sounds, with different decay times and accents."
         ),
     },
     {
@@ -273,8 +385,7 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "summary": "wavetable-like lead and evolving timbre",
         "basis": "wavetable synthesis practice",
         "guide": (
-            "Blend sine/saw/square/triangle shapes, crossfade or modulate brightness over time, and write lead phrases "
-            "that answer the bass or chord rhythm."
+            "Blend sine/saw/square/triangle shapes, crossfade or modulate brightness over time, and write lead phrases that answer the bass or chord rhythm."
         ),
     },
     {
@@ -284,8 +395,7 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "summary": "light comb/allpass-style artificial reverb",
         "basis": "Schroeder 1962",
         "guide": (
-            "Use a few short feedback delays and allpass-like diffusers or repeated quiet taps to add space while keeping "
-            "CPU and memory simple."
+            "Use a few short feedback delays and allpass-like diffusers or repeated quiet taps to add space while keeping CPU and memory simple."
         ),
     },
     {
@@ -295,8 +405,7 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "summary": "early reflections plus smoother reverb tail",
         "basis": "Moorer 1979",
         "guide": (
-            "Add a small pattern of early reflections before the reverb tail, then keep wet level controlled so the mix "
-            "stays clear."
+            "Add a small pattern of early reflections before the reverb tail, then keep wet level controlled so the mix stays clear."
         ),
     },
     {
@@ -306,8 +415,7 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "summary": "periodic A/B cycle for seamless loops",
         "basis": "loop-based composition practice",
         "guide": (
-            "Use a periodic A/B or A/B/A cycle, align phrase lengths to bars, avoid one-shot intros/outros, and keep "
-            "effect tails either short or wrapped into the next cycle."
+            "Use a periodic A/B or A/B/A cycle, align phrase lengths to bars, avoid one-shot intros/outros, and keep effect tails either short or wrapped into the next cycle."
         ),
     },
     {
@@ -317,11 +425,136 @@ TECHNIQUE_GUIDES: tuple[dict[str, Any], ...] = (
         "summary": "energy curve and release moments",
         "basis": "electronic arrangement practice",
         "guide": (
-            "Shape density, register, filter brightness, and drum activity into small build-and-release arcs instead of "
-            "keeping the same intensity throughout."
+            "Shape density, register, filter brightness, and drum activity into small build-and-release arcs instead of keeping the same intensity throughout."
         ),
     },
 )
+
+STYLE_PROFILES: dict[str, dict[str, Any]] = {
+    "ambient": {
+        "bpm": 76,
+        "energy": 0.32,
+        "brightness": 0.68,
+        "density": 0.32,
+        "key": "D minor",
+        "instruments": ["soft_pad", "sine_bell", "sub_bass", "noise_texture"],
+        "effects": ["wide_reverb", "gentle_delay", "slow_filter"],
+    },
+    "ambient techno": {
+        "bpm": 118,
+        "energy": 0.52,
+        "brightness": 0.48,
+        "density": 0.54,
+        "key": "F minor",
+        "instruments": ["soft_pad", "warm_bass", "dub_stabs", "soft_techno_drums"],
+        "effects": ["sidechain", "dub_delay", "wide_reverb"],
+    },
+    "lofi": {
+        "bpm": 84,
+        "energy": 0.42,
+        "brightness": 0.42,
+        "density": 0.52,
+        "key": "A minor",
+        "instruments": ["warm_keys", "synth_bass", "lofi_drums", "vinyl_noise"],
+        "effects": ["soft_clip", "small_delay", "lowpass", "tape_wobble"],
+    },
+    "8bit": {
+        "bpm": 132,
+        "energy": 0.72,
+        "brightness": 0.82,
+        "density": 0.68,
+        "key": "C minor",
+        "instruments": ["8bit_lead", "pulse_bass", "pingpong_arp", "chip_drums"],
+        "effects": ["short_delay", "soft_clip"],
+    },
+    "melodic techno": {
+        "bpm": 124,
+        "energy": 0.70,
+        "brightness": 0.50,
+        "density": 0.68,
+        "key": "F minor",
+        "instruments": ["saw_lead", "acid_bass", "dark_pad", "techno_drums"],
+        "effects": ["sidechain", "filter_sweep", "riser", "small_delay"],
+    },
+    "acid techno": {
+        "bpm": 128,
+        "energy": 0.78,
+        "brightness": 0.62,
+        "density": 0.72,
+        "key": "F minor",
+        "instruments": ["acid_bass", "saw_lead", "dark_pad", "electro_drums"],
+        "effects": ["sidechain", "filter_sweep", "riser", "soft_clip"],
+    },
+    "synthwave": {
+        "bpm": 100,
+        "energy": 0.58,
+        "brightness": 0.62,
+        "density": 0.55,
+        "key": "C minor",
+        "instruments": ["warm_pad", "octave_bass", "retro_lead", "gated_drums"],
+        "effects": ["chorus_detune", "plate_reverb", "tape_saturation"],
+    },
+    "trance": {
+        "bpm": 136,
+        "energy": 0.80,
+        "brightness": 0.76,
+        "density": 0.76,
+        "key": "E minor",
+        "instruments": ["supersaw_lead", "rolling_bass", "trance_arp", "drums"],
+        "effects": ["sidechain", "riser", "delay_throw", "wide_reverb"],
+    },
+    "house": {
+        "bpm": 122,
+        "energy": 0.64,
+        "brightness": 0.56,
+        "density": 0.62,
+        "key": "A minor",
+        "instruments": ["warm_keys", "offbeat_bass", "house_drums", "short_lead"],
+        "effects": ["sidechain", "room_reverb", "small_delay"],
+    },
+    "breakbeat": {
+        "bpm": 128,
+        "energy": 0.70,
+        "brightness": 0.58,
+        "density": 0.76,
+        "key": "D minor",
+        "instruments": ["pluck_lead", "syncopated_bass", "breakbeat_drums", "noise_texture"],
+        "effects": ["stutter", "delay_throw", "soft_clip"],
+    },
+    "electronic": {
+        "bpm": 112,
+        "energy": 0.56,
+        "brightness": 0.60,
+        "density": 0.58,
+        "key": "C minor",
+        "instruments": ["wavetable_lead", "synth_bass", "soft_pad", "electro_drums"],
+        "effects": ["soft_clip", "small_delay", "sidechain"],
+    },
+}
+
+KEY_ROOTS = {
+    "c": 60,
+    "c#": 61,
+    "db": 61,
+    "d": 62,
+    "d#": 63,
+    "eb": 63,
+    "e": 64,
+    "f": 65,
+    "f#": 66,
+    "gb": 66,
+    "g": 67,
+    "g#": 68,
+    "ab": 68,
+    "a": 69,
+    "a#": 70,
+    "bb": 70,
+    "b": 71,
+}
+MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11]
+MINOR_SCALE = [0, 2, 3, 5, 7, 8, 10]
+DORIAN_SCALE = [0, 2, 3, 5, 7, 9, 10]
+PENTATONIC_MINOR = [0, 3, 5, 7, 10]
 
 
 @dataclass
@@ -339,7 +572,7 @@ class PromptBrief:
 class MusicSpec:
     mood: str = "playful"
     energy: float = 0.55
-    brightness: float = 0.6
+    brightness: float = 0.60
     density: float = 0.55
     bpm: int = 110
     key: str = "C minor"
@@ -348,6 +581,27 @@ class MusicSpec:
     duration: int = DEFAULT_DURATION
     loopable: bool = False
     send_mode: str = "auto"
+
+
+@dataclass
+class CompositionPlan:
+    version: int = 2
+    seed: int = 0
+    style_profile: str = "melodic techno"
+    root_midi: int = 60
+    tonality: str = "minor"
+    scale: list[int] = field(default_factory=lambda: MINOR_SCALE.copy())
+    bpm: int = 110
+    bar_count: int = 4
+    phrase_bars: int = 4
+    selected_techniques: list[str] = field(default_factory=list)
+    sections: list[dict[str, Any]] = field(default_factory=list)
+    chords: dict[str, Any] = field(default_factory=dict)
+    motifs: dict[str, Any] = field(default_factory=dict)
+    bass: dict[str, Any] = field(default_factory=dict)
+    drums: dict[str, Any] = field(default_factory=dict)
+    automation: dict[str, Any] = field(default_factory=dict)
+    mix: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -360,6 +614,7 @@ class RenderPlan:
     texture: dict[str, Any] = field(default_factory=dict)
     effects: dict[str, Any] = field(default_factory=dict)
     master: dict[str, Any] = field(default_factory=dict)
+    composer: dict[str, Any] = field(default_factory=dict)
 
 
 class RateLimiter:
@@ -404,10 +659,18 @@ def _clamp(value: float, low: float, high: float) -> float:
 
 def _safe_int(value: Any, default: int, low: int, high: int) -> int:
     try:
-        parsed = int(value)
+        parsed = int(float(value))
     except Exception:
         parsed = default
     return int(max(low, min(high, parsed)))
+
+
+def _safe_float(value: Any, default: float, low: float, high: float) -> float:
+    try:
+        parsed = float(value)
+    except Exception:
+        parsed = default
+    return _clamp(parsed, low, high)
 
 
 def _normalize_send_mode(value: Any, default: str = "auto") -> str:
@@ -417,6 +680,15 @@ def _normalize_send_mode(value: Any, default: str = "auto") -> str:
 
 def _normalize_diversity_level(value: Any, default: int = DEFAULT_DIVERSITY_LEVEL) -> int:
     return _safe_int(value, default, 0, 2)
+
+
+def _stable_seed(text: str, salt: str = "pymusic") -> int:
+    data = f"{salt}|{text}".encode("utf-8", "ignore")
+    acc = 2166136261
+    for b in data:
+        acc ^= b
+        acc = (acc * 16777619) & 0xFFFFFFFF
+    return int(acc or 1)
 
 
 def _technique_catalog() -> str:
@@ -433,7 +705,11 @@ def _format_technique_guides(guides: list[dict[str, Any]]) -> str:
     )
 
 
-def _select_technique_guides(brief: PromptBrief, spec: MusicSpec | None = None, diversity_level: int = DEFAULT_DIVERSITY_LEVEL) -> list[dict[str, Any]]:
+def _select_technique_guides(
+    brief: PromptBrief,
+    spec: MusicSpec | None = None,
+    diversity_level: int = DEFAULT_DIVERSITY_LEVEL,
+) -> list[dict[str, Any]]:
     diversity_level = _normalize_diversity_level(diversity_level)
     text_parts = [
         brief.original_prompt,
@@ -458,90 +734,112 @@ def _select_technique_guides(brief: PromptBrief, spec: MusicSpec | None = None, 
         category = str(guide.get("category", "general"))
         score = 0
         if guide_id == "arrangement_motifs":
-            score += 8
-        elif category == "composition":
-            score += 1
-        elif category == "synthesis":
-            score += 1
-        elif category in {"effect", "structure"}:
-            score += 1
+            score += 10
+        elif guide_id in {"call_response_theme", "chord_tone_targeting", "bass_kick_lock", "sidechain_ducking"}:
+            score += 6
+        elif category == "structure":
+            score += 3
+        elif category in {"composition", "synthesis", "effect"}:
+            score += 2
         if guide_id in text or guide_id.replace("_", " ") in text:
-            score += 10
+            score += 12
         if guide_id in ref_text or guide_id.replace("_", " ") in ref_text:
-            score += 10
+            score += 12
         for keyword in guide.get("keywords", []):
             keyword_text = str(keyword).lower()
             if keyword_text and keyword_text in text:
-                score += 2
-
+                score += 3
         if spec is not None:
             style_text = f"{spec.mood} {' '.join(spec.instruments)} {' '.join(spec.effects)}".lower()
             if spec.loopable and guide_id == "loopable_ab_cycle":
+                score += 10
+            if spec.duration <= 35 and guide_id == "micro_arrangement":
                 score += 8
             if guide_id == "ambient_pad" and ("ambient" in style_text or "pad" in style_text or "drone" in style_text):
-                score += 4
+                score += 6
+            elif guide_id == "ambient_techno" and "ambient" in style_text and "techno" in style_text:
+                score += 7
             elif guide_id == "8bit_chiptune" and ("8bit" in style_text or "chip" in style_text):
-                score += 4
+                score += 7
             elif guide_id == "lofi_hiphop" and "lofi" in style_text:
-                score += 4
-            elif guide_id == "euclidean_drums" and (spec.density > 0.48 or "drum" in style_text or "beat" in style_text):
-                score += 4
+                score += 7
+            elif guide_id == "melodic_techno" and "techno" in style_text:
+                score += 7
+            elif guide_id == "synthwave" and ("synthwave" in style_text or "retro" in style_text):
+                score += 7
+            elif guide_id == "trance" and "trance" in style_text:
+                score += 7
+            elif guide_id == "house_groove" and "house" in style_text:
+                score += 7
+            elif guide_id == "breakbeat" and ("break" in style_text or "idm" in style_text):
+                score += 7
+            elif guide_id == "acid_bass" and ("acid" in style_text or "cyber" in style_text or spec.energy > 0.72):
+                score += 6
+            elif guide_id == "euclidean_drums" and (spec.density > 0.45 or "drum" in style_text or "beat" in style_text):
+                score += 6
             elif guide_id == "markov_melody":
-                score += 3
+                score += 4
             elif guide_id == "motif_recombine" and diversity_level >= 1:
-                score += 3
+                score += 4
             elif guide_id == "lsystem_phrase" and spec.duration >= 45:
-                score += 4
-            elif guide_id == "pingpong_arpeggio" and ("8bit" in style_text or "chip" in style_text or spec.brightness > 0.7):
-                score += 4
+                score += 5
+            elif guide_id == "pingpong_arpeggio" and ("8bit" in style_text or "chip" in style_text or "trance" in style_text or spec.brightness > 0.72):
+                score += 5
             elif guide_id == "random_walk_melody" and ("ambient" in style_text or "lofi" in style_text or spec.energy < 0.48):
+                score += 5
+            elif guide_id == "stutter_pattern" and (diversity_level >= 2 or "break" in style_text or spec.energy > 0.70):
                 score += 4
-            elif guide_id == "stutter_pattern" and (diversity_level >= 2 or spec.energy > 0.68):
-                score += 3
             elif guide_id == "phase_pattern" and ("techno" in style_text or "minimal" in style_text or "acid" in style_text):
+                score += 5
+            elif guide_id == "fm_synthesis" and ("bell" in style_text or "ice" in text or "crystal" in text or spec.brightness > 0.70):
+                score += 5
+            elif guide_id == "noise_texture" and ("noise" in style_text or "reverb" in style_text or "rain" in text or "wind" in text):
                 score += 4
-            elif guide_id == "fm_synthesis" and ("bell" in style_text or "ice" in text or "crystal" in text or spec.brightness > 0.72):
-                score += 4
-            elif guide_id == "acid_bass" and ("acid" in style_text or spec.energy > 0.7):
-                score += 3
-            elif guide_id == "noise_texture" and ("noise" in style_text or "reverb" in style_text):
-                score += 3
             elif guide_id == "karplus_pluck" and "pluck" in style_text:
-                score += 3
+                score += 4
             elif guide_id == "bandlimited_saw" and ("saw" in style_text or "acid" in style_text or spec.energy > 0.68):
-                score += 3
+                score += 4
             elif guide_id == "bandlimited_square" and ("8bit" in style_text or "chip" in style_text or "square" in style_text):
-                score += 4
+                score += 5
             elif guide_id == "additive_pad" and ("ambient" in style_text or "pad" in style_text):
+                score += 5
+            elif guide_id == "subtractive_bass" and ("bass" in style_text or "acid" in style_text or spec.energy > 0.60):
                 score += 4
-            elif guide_id == "subtractive_bass" and ("bass" in style_text or "acid" in style_text or spec.energy > 0.6):
-                score += 3
-            elif guide_id == "noise_drum_resonator" and (spec.density > 0.5 or "drum" in style_text or "8bit" in style_text):
-                score += 3
+            elif guide_id == "noise_drum_resonator" and (spec.density > 0.50 or "drum" in style_text or "8bit" in style_text):
+                score += 4
             elif guide_id == "wavetable_lead" and ("lead" in style_text or "synth" in style_text or "electronic" in style_text):
-                score += 3
-            elif guide_id == "schroeder_reverb" and ("ambient" in style_text or "reverb" in style_text or spec.energy < 0.5):
+                score += 4
+            elif guide_id == "schroeder_reverb" and ("ambient" in style_text or "reverb" in style_text or spec.energy < 0.50):
                 score += 4
             elif guide_id == "moorer_reverb" and ("lofi" in style_text or "reverb" in style_text):
-                score += 3
+                score += 4
+            elif guide_id == "riser_downlifter" and not spec.loopable and (spec.duration >= 18 or spec.energy > 0.55):
+                score += 5
             elif guide_id == "tension_release" and not spec.loopable:
-                score += 3
-
-        if diversity_level >= 2 and guide_id in {"acid_bass", "karplus_pluck", "wavetable_lead", "stutter_pattern", "phase_pattern", "lsystem_phrase"}:
-            score += 1
+                score += 5
+            if diversity_level >= 2 and guide_id in {
+                "acid_bass",
+                "karplus_pluck",
+                "wavetable_lead",
+                "stutter_pattern",
+                "phase_pattern",
+                "lsystem_phrase",
+                "breakbeat",
+                "trance",
+            }:
+                score += 2
         scored.append((score, index, guide))
 
     scored.sort(key=lambda item: (-item[0], item[1]))
-    limit = 8 if diversity_level >= 2 else 6
+    limit = 10 if diversity_level >= 2 else 8
     selected: list[dict[str, Any]] = []
     seen: set[str] = set()
 
     def add_guide(guide: dict[str, Any]) -> None:
         guide_id = str(guide["id"])
-        if guide_id in seen:
-            return
-        selected.append(guide)
-        seen.add(guide_id)
+        if guide_id not in seen:
+            selected.append(guide)
+            seen.add(guide_id)
 
     def add_guide_by_id(guide_id: str) -> None:
         for candidate in TECHNIQUE_GUIDES:
@@ -560,31 +858,25 @@ def _select_technique_guides(brief: PromptBrief, spec: MusicSpec | None = None, 
                 return
         add_guide_by_id(fallback_id)
 
-    add_guide_by_id("arrangement_motifs")
+    for required in ("arrangement_motifs", "call_response_theme", "chord_tone_targeting", "bass_kick_lock"):
+        add_guide_by_id(required)
+    if spec is not None and spec.duration <= 35:
+        add_guide_by_id("micro_arrangement")
+    add_top_category("style", "melodic_techno")
     add_top_category("composition", "markov_melody")
-    add_top_category("synthesis", "fm_synthesis")
+    add_top_category("synthesis", "wavetable_lead")
+    add_top_category("effect", "sidechain_ducking")
     if spec is not None and spec.loopable:
         add_guide_by_id("loopable_ab_cycle")
     else:
-        add_top_category("effect", "schroeder_reverb")
-        add_top_category("structure", "tension_release")
-
+        add_guide_by_id("tension_release")
+        add_guide_by_id("riser_downlifter")
     for score, _, guide in scored:
         if score <= 0:
-            continue
-        if str(guide["id"]) in seen:
             continue
         add_guide(guide)
         if len(selected) >= limit:
             break
-
-    default_ids = ("markov_melody", "fm_synthesis", "wavetable_lead", "noise_texture")
-    for default_id in default_ids:
-        if len(selected) >= min(4, limit):
-            break
-        if default_id in seen:
-            continue
-        add_guide_by_id(default_id)
     return selected[:limit]
 
 
@@ -592,7 +884,7 @@ def _extract_json(text: str) -> dict[str, Any] | None:
     text = text.strip()
     if not text:
         return None
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S | re.I)
     if fenced:
         text = fenced.group(1)
     else:
@@ -616,7 +908,7 @@ def _extract_python_code(text: str) -> str:
 
 
 def _validate_generated_python(source: str) -> None:
-    if len(source) > 18000:
+    if len(source) > 32000:
         raise ValueError("generated Python code is too long")
     tree = ast.parse(source)
     allowed_imports = {"numpy", "math", "random"}
@@ -633,6 +925,10 @@ def _validate_generated_python(source: str) -> None:
         "dir",
         "help",
         "breakpoint",
+        "getattr",
+        "setattr",
+        "delattr",
+        "memoryview",
         "os",
         "sys",
         "subprocess",
@@ -641,12 +937,14 @@ def _validate_generated_python(source: str) -> None:
         "socket",
         "requests",
         "httpx",
+        "urllib",
         "wave",
         "builtins",
     }
     blocked_attrs = {
         "save",
         "savez",
+        "savez_compressed",
         "load",
         "fromfile",
         "tofile",
@@ -655,6 +953,11 @@ def _validate_generated_python(source: str) -> None:
         "loadtxt",
         "savetxt",
         "ctypeslib",
+        "DataSource",
+        "lib",
+        "testing",
+        "distutils",
+        "f2py",
     }
     has_render = False
     for node in ast.walk(tree):
@@ -688,7 +991,7 @@ def _validate_generated_python(source: str) -> None:
 def _prompt_overrides(prompt: str) -> dict[str, Any]:
     lower = prompt.lower()
     duration = None
-    match = re.search(r"(\d{1,3})\s*(?:秒|s|sec|second|seconds)", lower)
+    match = re.search(r"(\d{1,4})\s*(?:秒|s|sec|second|seconds)", lower)
     if match:
         duration = int(match.group(1))
     send_mode = None
@@ -697,9 +1000,9 @@ def _prompt_overrides(prompt: str) -> dict[str, Any]:
     elif "语音" in prompt or "voice" in lower:
         send_mode = "voice"
     loopable = None
-    if "可循环" in prompt or "循环" in prompt or "loop" in lower:
+    if "可循环" in prompt or "循环" in prompt or "loop" in lower or "seamless" in lower:
         loopable = True
-    if "不要循环" in prompt or "不循环" in prompt:
+    if "不要循环" in prompt or "不循环" in prompt or "not loop" in lower:
         loopable = False
     return {"duration": duration, "send_mode": send_mode, "loopable": loopable}
 
@@ -717,52 +1020,48 @@ def _strip_command_prefix(text: str) -> str:
     return re.sub(r"^/?pymusic(?:\s+|$)", "", text, flags=re.I).strip()
 
 
+def _profile_name_from_text(text: str) -> str:
+    lower = text.lower()
+    # Explicit genre words should win over scene/mood words such as “寒冬” or “雨”.
+    if any(word in lower or word in text for word in ["ambient techno", "dub techno", "氛围科技", "深空科技"]):
+        return "ambient techno"
+    if any(word in lower or word in text for word in ["synthwave", "retro", "neon", "80s", "霓虹", "复古未来"]):
+        return "synthwave"
+    if any(word in lower or word in text for word in ["trance", "uplift", "rave", "anthem", "迷幻", "锐舞", "高能"]):
+        return "trance"
+    if any(word in lower or word in text for word in ["house", "club", "deep house", "浩室", "舞曲"]):
+        return "house"
+    if any(word in lower or word in text for word in ["breakbeat", "breaks", "idm", "碎拍", "故障"]):
+        return "breakbeat"
+    if any(word in lower or word in text for word in ["8bit", "chiptune", "pixel", "arcade", "game", "像素", "游戏"]):
+        return "8bit"
+    if any(word in lower or word in text for word in ["acid", "303", "acid techno", "cyber", "赛博", "酸性"]):
+        return "acid techno"
+    if any(word in lower or word in text for word in ["techno", "melodic techno", "dark", "underground", "黑暗", "紧张", "地下"]):
+        return "melodic techno"
+    if any(word in lower or word in text for word in ["lofi", "rain", "cafe", "study", "chill", "雨", "咖啡", "学习", "放松"]):
+        return "lofi"
+    if any(word in lower or word in text for word in ["ambient", "winter", "ice", "cold", "lonely", "wind", "氛围", "星空", "宇宙", "空灵", "寒冬", "冰", "冷", "冬", "孤独", "风"]):
+        return "ambient"
+    return "electronic"
+
+
 def _fallback_spec(prompt: str, default_duration: int, max_duration: int, default_send_mode: str, loopable_default: bool) -> MusicSpec:
-    lower = prompt.lower()
-    mood = "playful"
-    energy = 0.55
-    brightness = 0.6
-    density = 0.55
-    bpm = 110
-    key = "C minor"
-    instruments = ["8bit_lead", "synth_bass", "soft_pad", "lofi_drums"]
-    effects = ["soft_clip", "small_delay"]
-
-    if any(word in lower or word in prompt for word in ["ambient", "winter", "ice", "cold", "lonely", "wind", "氛围", "星空", "宇宙", "空灵", "寒冬", "冰", "冷", "冬", "孤独", "风"]):
-        mood, energy, brightness, density, bpm = "ambient", 0.32, 0.72, 0.35, 76
-        instruments = ["soft_pad", "sine_bell", "sub_bass", "noise_texture"]
-        effects = ["wide_reverb", "gentle_delay"]
-        key = "D minor"
-    elif any(word in lower or word in prompt for word in ["lofi", "rain", "cafe", "study", "chill", "雨", "咖啡", "学习", "放松"]):
-        mood, energy, brightness, density, bpm = "lofi", 0.42, 0.42, 0.52, 84
-        instruments = ["warm_keys", "synth_bass", "lofi_drums", "vinyl_noise"]
-        effects = ["soft_clip", "small_delay", "lowpass"]
-        key = "A minor"
-    elif any(word in lower or word in prompt for word in ["8bit", "chiptune", "pixel", "arcade", "game", "像素", "游戏", "电子"]):
-        mood, energy, brightness, density, bpm = "8bit", 0.72, 0.86, 0.66, 132
-        instruments = ["8bit_lead", "pulse_bass", "arp", "chip_drums"]
-        effects = ["soft_clip"]
-        key = "C minor"
-    elif any(word in lower or word in prompt for word in ["dark", "黑暗", "紧张", "赛博", "cyber"]):
-        mood, energy, brightness, density, bpm = "dark electronic", 0.68, 0.35, 0.64, 124
-        instruments = ["saw_lead", "synth_bass", "dark_pad", "electro_drums"]
-        effects = ["soft_clip", "small_delay"]
-        key = "F minor"
-
+    profile_name = _profile_name_from_text(prompt)
+    profile = STYLE_PROFILES[profile_name]
     overrides = _prompt_overrides(prompt)
     duration = _safe_int(overrides["duration"], default_duration, 5, max_duration) if overrides["duration"] else default_duration
     send_mode = _normalize_send_mode(overrides["send_mode"], default_send_mode)
     loopable = loopable_default if overrides["loopable"] is None else bool(overrides["loopable"])
-
     return MusicSpec(
-        mood=mood,
-        energy=energy,
-        brightness=brightness,
-        density=density,
-        bpm=bpm,
-        key=key,
-        instruments=instruments,
-        effects=effects,
+        mood=profile_name,
+        energy=float(profile["energy"]),
+        brightness=float(profile["brightness"]),
+        density=float(profile["density"]),
+        bpm=int(profile["bpm"]),
+        key=str(profile["key"]),
+        instruments=list(profile["instruments"]),
+        effects=list(profile["effects"]),
         duration=duration,
         loopable=loopable,
         send_mode=send_mode,
@@ -773,1164 +1072,1410 @@ def _fallback_brief(prompt: str) -> PromptBrief:
     fallback = _fallback_spec(prompt, DEFAULT_DURATION, HARD_MAX_SECONDS, "auto", False)
     style = fallback.mood
     instruments = ", ".join(fallback.instruments[:4])
-    effects = ", ".join(fallback.effects[:3])
+    effects = ", ".join(fallback.effects[:4])
     style_text = f"{style} {' '.join(fallback.instruments)} {' '.join(fallback.effects)}".lower()
-    technique_refs = ["arrangement_motifs"]
-    lower_prompt = prompt.lower()
-    if style == "ambient" or any(word in lower_prompt or word in prompt for word in ["ambient", "winter", "ice", "cold", "lonely", "wind", "氛围", "星空", "宇宙", "空灵", "寒冬", "冰", "冷", "冬", "孤独", "风"]):
+    technique_refs = ["arrangement_motifs", "call_response_theme", "chord_tone_targeting", "bass_kick_lock", "sidechain_ducking"]
+    if fallback.duration <= 35:
+        technique_refs.append("micro_arrangement")
+    if style == "ambient":
         technique_refs.extend(["ambient_pad", "random_walk_melody", "fm_synthesis", "additive_pad", "schroeder_reverb", "noise_texture"])
+    elif style == "ambient techno":
+        technique_refs.extend(["ambient_techno", "euclidean_drums", "phase_pattern", "additive_pad", "subtractive_bass", "moorer_reverb"])
     elif "lofi" in style_text:
         technique_refs.extend(["lofi_hiphop", "euclidean_drums", "markov_melody", "karplus_pluck", "moorer_reverb", "noise_texture"])
     elif "8bit" in style_text or "chip" in style_text:
         technique_refs.extend(["8bit_chiptune", "pingpong_arpeggio", "euclidean_drums", "bandlimited_square", "noise_drum_resonator", "stutter_pattern"])
-    elif "acid" in style_text or "dark" in style_text or "electronic" in style_text:
-        technique_refs.extend(["acid_bass", "euclidean_drums", "subtractive_bass", "bandlimited_saw", "phase_pattern", "tension_release"])
+    elif "synthwave" in style_text:
+        technique_refs.extend(["synthwave", "motif_recombine", "bandlimited_saw", "additive_pad", "moorer_reverb"])
+    elif "trance" in style_text:
+        technique_refs.extend(["trance", "pingpong_arpeggio", "bandlimited_saw", "riser_downlifter", "tension_release"])
+    elif "house" in style_text:
+        technique_refs.extend(["house_groove", "euclidean_drums", "subtractive_bass", "moorer_reverb"])
+    elif "break" in style_text:
+        technique_refs.extend(["breakbeat", "stutter_pattern", "noise_drum_resonator", "wavetable_lead"])
+    elif "acid" in style_text or "techno" in style_text or "dark" in style_text:
+        technique_refs.extend(["melodic_techno", "acid_bass", "euclidean_drums", "subtractive_bass", "bandlimited_saw", "phase_pattern", "riser_downlifter", "tension_release"])
     else:
         technique_refs.extend(["markov_melody", "motif_recombine", "wavetable_lead", "fm_synthesis", "tension_release"])
+    if fallback.loopable:
+        technique_refs.append("loopable_ab_cycle")
+    # Keep order and uniqueness.
+    technique_refs = list(dict.fromkeys(technique_refs))
     enriched = (
-        f"A polished {style} instrumental loop for the scene '{prompt}'. "
-        f"Use {instruments}, {fallback.bpm} BPM, {fallback.key}, "
-        f"energy {fallback.energy:.2f}, brightness {fallback.brightness:.2f}, "
-        f"density {fallback.density:.2f}, with {effects}. "
-        "Keep it melodic, coherent, and easy to listen to."
+        f"A polished {style} instrumental for the scene '{prompt}'. "
+        f"Use {instruments}, {fallback.bpm} BPM, {fallback.key}, energy {fallback.energy:.2f}, "
+        f"brightness {fallback.brightness:.2f}, density {fallback.density:.2f}, with {effects}. "
+        "Write a memorable theme and answer phrase, target chord tones on strong beats, coordinate bass with kick/chords, "
+        "add groove accents and fills, and shape a small build/drop or evolving arc with sidechain, delay/reverb, riser/downlifter, and soft saturation where appropriate."
     )
     return PromptBrief(
         original_prompt=prompt,
         enriched_prompt=enriched,
         style=style,
         scene=prompt,
-        musical_intent="make a pleasant pure-Python generated instrumental clip",
-        references=(technique_refs + fallback.instruments[:4])[:8],
-        avoid=["vocals", "external samples", "overly harsh noise"],
+        musical_intent="generate a structured pure-Python electronic music clip with theme, variation, groove, and production movement",
+        references=technique_refs,
+        avoid=["vocals", "lyrics", "external samples", "copyrighted artist imitation", "one-bar test loop"],
     )
 
 
 def _brief_from_dict(data: dict[str, Any], original_prompt: str, fallback: PromptBrief) -> PromptBrief:
-    references = data.get("references", fallback.references)
+    refs = data.get("references", fallback.references)
     avoid = data.get("avoid", fallback.avoid)
-    if not isinstance(references, list):
-        references = fallback.references
-    if not isinstance(avoid, list):
-        avoid = fallback.avoid
-
-    enriched = str(data.get("enriched_prompt", fallback.enriched_prompt)).strip()
-    if not enriched:
-        enriched = fallback.enriched_prompt
     return PromptBrief(
         original_prompt=original_prompt,
-        enriched_prompt=enriched[:1200],
-        style=str(data.get("style", fallback.style)).strip()[:80] or fallback.style,
-        scene=str(data.get("scene", fallback.scene)).strip()[:200] or fallback.scene,
-        musical_intent=str(data.get("musical_intent", fallback.musical_intent)).strip()[:300] or fallback.musical_intent,
-        references=[str(item).strip()[:80] for item in references[:8] if str(item).strip()],
-        avoid=[str(item).strip()[:80] for item in avoid[:8] if str(item).strip()],
+        enriched_prompt=str(data.get("enriched_prompt") or fallback.enriched_prompt)[:2000],
+        style=str(data.get("style") or fallback.style)[:80],
+        scene=str(data.get("scene") or fallback.scene)[:240],
+        musical_intent=str(data.get("musical_intent") or fallback.musical_intent)[:400],
+        references=[str(item)[:80] for item in refs if str(item).strip()][:12] if isinstance(refs, list) else fallback.references,
+        avoid=[str(item)[:120] for item in avoid if str(item).strip()][:12] if isinstance(avoid, list) else fallback.avoid,
     )
 
 
 def _spec_from_dict(data: dict[str, Any], fallback: MusicSpec, max_duration: int) -> MusicSpec:
-    duration = _safe_int(data.get("duration", fallback.duration), fallback.duration, 5, max_duration)
-    bpm = _safe_int(data.get("bpm", fallback.bpm), fallback.bpm, 55, 180)
     instruments = data.get("instruments", fallback.instruments)
     effects = data.get("effects", fallback.effects)
-    if not isinstance(instruments, list):
-        instruments = fallback.instruments
-    if not isinstance(effects, list):
-        effects = fallback.effects
     return MusicSpec(
-        mood=str(data.get("mood", fallback.mood))[:80],
-        energy=_clamp(float(data.get("energy", fallback.energy)), 0.0, 1.0),
-        brightness=_clamp(float(data.get("brightness", fallback.brightness)), 0.0, 1.0),
-        density=_clamp(float(data.get("density", fallback.density)), 0.0, 1.0),
-        bpm=bpm,
-        key=str(data.get("key", fallback.key))[:40],
-        instruments=[str(item)[:40] for item in instruments[:8]],
-        effects=[str(item)[:40] for item in effects[:8]],
-        duration=duration,
+        mood=str(data.get("mood") or fallback.mood)[:80],
+        energy=_safe_float(data.get("energy"), fallback.energy, 0.0, 1.0),
+        brightness=_safe_float(data.get("brightness"), fallback.brightness, 0.0, 1.0),
+        density=_safe_float(data.get("density"), fallback.density, 0.0, 1.0),
+        bpm=_safe_int(data.get("bpm"), fallback.bpm, 55, 180),
+        key=str(data.get("key") or fallback.key)[:40],
+        instruments=[str(item)[:80] for item in instruments if str(item).strip()][:10]
+        if isinstance(instruments, list)
+        else fallback.instruments,
+        effects=[str(item)[:80] for item in effects if str(item).strip()][:10]
+        if isinstance(effects, list)
+        else fallback.effects,
+        duration=_safe_int(data.get("duration"), fallback.duration, 5, max_duration),
         loopable=bool(data.get("loopable", fallback.loopable)),
         send_mode=_normalize_send_mode(data.get("send_mode", fallback.send_mode), fallback.send_mode),
     )
 
 
-def _default_plan(spec: MusicSpec, diversity_level: int = DEFAULT_DIVERSITY_LEVEL) -> RenderPlan:
-    diversity_level = _normalize_diversity_level(diversity_level)
-    style_text = f"{spec.mood} {' '.join(spec.instruments)}".lower()
-    if "ambient" in style_text or "氛围" in style_text:
-        tracks = [
-            {"role": "chords", "name": "pad", "gain": 1.0},
-            {"role": "melody", "name": "bell", "gain": 0.8},
-            {"role": "bass", "name": "sub_drone", "gain": 0.9},
-            {"role": "texture", "name": "noise_texture", "gain": 0.8},
+def _root_midi_and_scale(key: str) -> tuple[int, list[int], str]:
+    lower = str(key or "C minor").strip().lower().replace("♯", "#").replace("♭", "b")
+    match = re.match(r"^([a-g](?:#|b)?).*", lower)
+    root_name = match.group(1) if match else "c"
+    root = KEY_ROOTS.get(root_name, 60)
+    if "major" in lower or "ionian" in lower or "大调" in lower:
+        return root, MAJOR_SCALE, "major"
+    if "dorian" in lower or "多利亚" in lower:
+        return root, DORIAN_SCALE, "dorian"
+    return root, MINOR_SCALE, "minor"
+
+
+def _chord_progression_for(spec: MusicSpec, profile: str) -> tuple[str, list[list[int]]]:
+    text = f"{spec.key} {profile} {spec.mood} {' '.join(spec.instruments)}".lower()
+    if "major" in text and "lofi" not in text:
+        if profile in {"house", "synthwave"}:
+            return "I-V-vi-IV", [[0, 2, 4], [4, 6, 1], [5, 0, 2], [3, 5, 0]]
+        return "I-vi-IV-V", [[0, 2, 4], [5, 0, 2], [3, 5, 0], [4, 6, 1]]
+    if profile in {"lofi", "synthwave"}:
+        return "i-VI-iv-V", [[0, 2, 4, 6], [5, 0, 2, 4], [3, 5, 0, 2], [4, 6, 1, 3]]
+    if profile in {"ambient", "ambient techno"}:
+        return "i-VI-iv-v", [[0, 2, 4], [5, 0, 2], [3, 5, 0], [4, 6, 1]]
+    if profile in {"trance", "melodic techno", "acid techno"}:
+        return "i-VI-III-VII", [[0, 2, 4], [5, 0, 2], [2, 4, 6], [6, 1, 3]]
+    return "i-VI-III-VII", [[0, 2, 4], [5, 0, 2], [2, 4, 6], [6, 1, 3]]
+
+
+def _allocate_section_bars(total_bars: int, section_defs: list[tuple[str, float, str, float]], loopable: bool) -> list[dict[str, Any]]:
+    if total_bars <= 0:
+        total_bars = 1
+    min_bars = 1 if total_bars < 8 else 2
+    bars = [max(min_bars, int(round(frac * total_bars))) for _, frac, _, _ in section_defs]
+    while sum(bars) > total_bars and max(bars) > min_bars:
+        idx = max(range(len(bars)), key=lambda i: bars[i])
+        bars[idx] -= 1
+    while sum(bars) < total_bars:
+        idx = max(range(len(bars)), key=lambda i: section_defs[i][1])
+        bars[idx] += 1
+    start = 0
+    sections: list[dict[str, Any]] = []
+    for (name, _, role, energy), length in zip(section_defs, bars):
+        sections.append({"id": name, "start_bar": start, "bars": int(length), "role": role, "energy": float(energy)})
+        start += length
+    if loopable and sections:
+        sections[0]["loop_anchor"] = True
+        sections[-1]["loop_anchor"] = True
+    return sections
+
+
+def _section_defs(duration: int, loopable: bool, profile: str) -> list[tuple[str, float, str, float]]:
+    if loopable:
+        return [
+            ("A_hook", 0.38, "hook", 0.86),
+            ("B_answer", 0.36, "variation", 0.94),
+            ("A2_return", 0.26, "return", 0.90),
         ]
-        drum_pattern = "ambient_no_drums"
-        bass_pattern = "sub_drone"
-        progression = "modal_drone"
-        melody_shape = "stepwise"
-        texture_noise = "space"
-    elif "lofi" in style_text or "雨" in style_text:
-        tracks = [
-            {"role": "chords", "name": "warm_keys", "gain": 1.0},
-            {"role": "melody", "name": "pluck", "gain": 0.85},
-            {"role": "bass", "name": "warm_bass", "gain": 0.95},
-            {"role": "drums", "name": "lofi_drums", "gain": 0.9},
-            {"role": "texture", "name": "vinyl_noise", "gain": 0.8},
+    if duration < 35:
+        return [
+            ("identity_hook", 0.30, "hook", 0.74),
+            ("micro_build", 0.24, "build", 0.88),
+            ("mini_drop", 0.32, "drop", 1.00),
+            ("tail", 0.14, "outro", 0.58),
         ]
-        drum_pattern = "lofi_swing"
-        bass_pattern = "warm_roots"
-        progression = "ii-V-I"
-        melody_shape = "pentatonic"
-        texture_noise = "vinyl"
-    elif "8bit" in style_text or "chiptune" in style_text or "像素" in style_text:
-        tracks = [
-            {"role": "melody", "name": "chip_lead", "gain": 1.0},
-            {"role": "bass", "name": "chip_bass", "gain": 0.95},
-            {"role": "chords", "name": "pluck", "gain": 0.8},
-            {"role": "drums", "name": "chip_drums", "gain": 0.9},
+    if duration < 60:
+        return [
+            ("intro", 0.16, "intro", 0.50),
+            ("A_theme", 0.30, "hook", 0.78),
+            ("build", 0.18, "build", 0.92),
+            ("B_drop", 0.26, "drop", 1.00),
+            ("outro", 0.10, "outro", 0.55),
         ]
-        drum_pattern = "8bit_arpeggio_beat"
-        bass_pattern = "root_octave"
-        progression = "i-VI-III-VII"
-        melody_shape = "arpeggio"
-        texture_noise = "air"
-    elif spec.energy > 0.68:
-        tracks = [
-            {"role": "bass", "name": "acid_bass", "gain": 1.0},
-            {"role": "melody", "name": "chip_lead", "gain": 0.8},
-            {"role": "chords", "name": "pluck", "gain": 0.75},
-            {"role": "drums", "name": "electronic_drums", "gain": 1.0},
+    if profile == "ambient":
+        return [
+            ("fade_in", 0.16, "intro", 0.42),
+            ("A_theme", 0.28, "hook", 0.64),
+            ("B_evolve", 0.28, "variation", 0.76),
+            ("break_space", 0.14, "break", 0.52),
+            ("return", 0.14, "return", 0.68),
         ]
-        drum_pattern = "breakbeat" if diversity_level >= 2 and spec.density > 0.55 else "minimal_techno"
-        bass_pattern = "acid_bass" if diversity_level >= 1 else "root_octave"
-        progression = "i-iv-V-i"
-        melody_shape = "random_walk" if diversity_level >= 2 else "call_response"
-        texture_noise = "air"
+    return [
+        ("intro", 0.12, "intro", 0.48),
+        ("A_theme", 0.24, "hook", 0.74),
+        ("build", 0.16, "build", 0.95),
+        ("B_drop", 0.24, "drop", 1.00),
+        ("break", 0.10, "break", 0.46),
+        ("final_drop", 0.14, "return", 0.92),
+    ]
+
+
+def _make_motif(rng: random.Random, scale_len: int, diversity: int, profile: str) -> list[dict[str, Any]]:
+    if profile in {"8bit", "trance"}:
+        steps = [0, 2, 4, 6, 8, 10, 12, 14]
+        lengths = [2, 2, 2, 2, 2, 2, 2, 2]
+    elif profile in {"lofi", "ambient"}:
+        steps = [0, 3, 6, 8, 11, 14]
+        lengths = [3, 2, 2, 3, 2, 2]
     else:
-        tracks = [
-            {"role": "melody", "name": "chip_lead", "gain": 0.9},
-            {"role": "chords", "name": "warm_keys", "gain": 0.9},
-            {"role": "bass", "name": "warm_bass", "gain": 0.9},
-            {"role": "drums", "name": "electronic_drums", "gain": 0.9},
-        ]
-        drum_pattern = "breakbeat" if diversity_level >= 2 or spec.density > 0.62 else "minimal_techno"
-        bass_pattern = "syncopated_pulse" if diversity_level >= 1 else "warm_roots"
-        progression = "I-V-vi-IV" if spec.brightness > 0.62 else "i-VI-III-VII"
-        melody_shape = "random_walk" if diversity_level >= 2 else "motif_variation"
-        texture_noise = "air"
+        steps = [0, 2, 5, 7, 8, 10, 13, 14]
+        lengths = [2, 2, 1, 1, 2, 2, 1, 2]
+    contour = [0, 2, 4, 3, 2, 5, 4, 1]
+    if diversity >= 1:
+        contour = [degree + rng.choice([-1, 0, 0, 1]) for degree in contour]
+    motif: list[dict[str, Any]] = []
+    for i, step in enumerate(steps):
+        strong = step % 8 in {0, 4}
+        degree = contour[i % len(contour)] % scale_len
+        if strong:
+            degree = [0, 2, 4, 6][i % 4] % scale_len
+        octave = 1 if i >= len(steps) // 2 and profile not in {"ambient", "lofi"} else 0
+        motif.append(
+            {
+                "step": int(step),
+                "degree": int(degree),
+                "octave": int(octave),
+                "length_steps": int(lengths[i % len(lengths)]),
+                "velocity": round(0.72 + 0.18 * (1 if strong else rng.random()), 3),
+                "strong_chord_tone": bool(strong),
+            }
+        )
+    return motif
 
-    return RenderPlan(
-        tracks=tracks,
-        drums={"pattern": drum_pattern, "density": spec.density},
-        bass={"pattern": bass_pattern},
-        chords={"progression": progression, "voicing": "stabs" if diversity_level >= 2 and spec.energy > 0.62 else ("soft" if spec.brightness < 0.55 else "open")},
-        melody={"shape": melody_shape, "activity": spec.density, "register": "high" if spec.brightness > 0.65 else "mid"},
-        texture={"noise": texture_noise},
-        effects={
-            "delay": "small_delay" in spec.effects or "gentle_delay" in spec.effects,
-            "reverb": "wide_reverb" in spec.effects,
-            "lowpass": "lowpass" in spec.effects,
+
+def _variant_motif(motif: list[dict[str, Any]], scale_len: int, mode: str, rng: random.Random) -> list[dict[str, Any]]:
+    variant: list[dict[str, Any]] = []
+    if mode == "response":
+        for event in motif:
+            degree = int(event["degree"])
+            if not event.get("strong_chord_tone"):
+                degree = (degree + rng.choice([-1, 1, 2])) % scale_len
+            variant.append(
+                {
+                    **event,
+                    "step": int((event["step"] + 1 + (2 if event["step"] >= 8 else 0)) % 16),
+                    "degree": int(degree),
+                    "octave": int(event.get("octave", 0)) + (1 if event["step"] >= 8 else 0),
+                    "velocity": round(float(event.get("velocity", 0.75)) * 0.92, 3),
+                }
+            )
+    elif mode == "b":
+        cells = motif[:3] + motif[-3:]
+        for idx, event in enumerate(cells):
+            variant.append(
+                {
+                    **event,
+                    "step": int((idx * 2 + (1 if idx % 2 else 0)) % 16),
+                    "degree": int((scale_len - 1 - int(event["degree"]) + (2 if idx >= 3 else 0)) % scale_len),
+                    "octave": int(event.get("octave", 0)) + (1 if idx >= 3 else 0),
+                    "length_steps": int(max(1, min(4, int(event.get("length_steps", 2)) + (1 if idx % 2 else 0)))),
+                    "velocity": round(min(1.0, float(event.get("velocity", 0.75)) * 1.05), 3),
+                }
+            )
+    else:
+        variant = [dict(item) for item in motif]
+    return sorted(variant, key=lambda item: item["step"])
+
+
+def _euclidean_hits(pulses: int, steps: int, offset: int = 0) -> list[int]:
+    if pulses <= 0:
+        return []
+    hits: list[int] = []
+    bucket = 0
+    for step in range(steps):
+        bucket += pulses
+        if bucket >= steps:
+            bucket -= steps
+            hits.append((step + offset) % steps)
+    return sorted(set(hits))
+
+
+def _composition_plan_from_dict(data: dict[str, Any]) -> CompositionPlan:
+    if not isinstance(data, dict):
+        data = {}
+    scale = data.get("scale", MINOR_SCALE)
+    if not isinstance(scale, list) or not scale:
+        scale = MINOR_SCALE
+    selected = data.get("selected_techniques", [])
+    if not isinstance(selected, list):
+        selected = []
+    sections = data.get("sections", [])
+    if not isinstance(sections, list):
+        sections = []
+    return CompositionPlan(
+        version=_safe_int(data.get("version", 2), 2, 1, 99),
+        seed=_safe_int(data.get("seed", 0), 0, 0, 2**31 - 1),
+        style_profile=str(data.get("style_profile", "melodic techno"))[:80],
+        root_midi=_safe_int(data.get("root_midi", 60), 60, 0, 127),
+        tonality=str(data.get("tonality", "minor"))[:40],
+        scale=[int(item) for item in scale[:12]],
+        bpm=_safe_int(data.get("bpm", 110), 110, 55, 180),
+        bar_count=_safe_int(data.get("bar_count", 4), 4, 1, 4096),
+        phrase_bars=_safe_int(data.get("phrase_bars", 4), 4, 1, 64),
+        selected_techniques=[str(item)[:80] for item in selected[:16]],
+        sections=[item for item in sections[:128] if isinstance(item, dict)],
+        chords=data.get("chords") if isinstance(data.get("chords"), dict) else {},
+        motifs=data.get("motifs") if isinstance(data.get("motifs"), dict) else {},
+        bass=data.get("bass") if isinstance(data.get("bass"), dict) else {},
+        drums=data.get("drums") if isinstance(data.get("drums"), dict) else {},
+        automation=data.get("automation") if isinstance(data.get("automation"), dict) else {},
+        mix=data.get("mix") if isinstance(data.get("mix"), dict) else {},
+    )
+
+
+def _composer_to_dict(composer: CompositionPlan | dict[str, Any] | None) -> dict[str, Any]:
+    if isinstance(composer, CompositionPlan):
+        return asdict(composer)
+    if isinstance(composer, dict):
+        return composer
+    return {}
+
+
+def _compose_arrangement(
+    brief: PromptBrief,
+    spec: MusicSpec,
+    technique_guides: list[dict[str, Any]],
+    diversity_level: int,
+) -> CompositionPlan:
+    diversity_level = _normalize_diversity_level(diversity_level)
+    profile = _profile_name_from_text(
+        f"{brief.original_prompt} {brief.enriched_prompt} {brief.style} {spec.mood} {' '.join(spec.instruments)} {' '.join(spec.effects)}"
+    )
+    seed = _stable_seed(
+        f"{brief.original_prompt}|{brief.enriched_prompt}|{spec.mood}|{spec.key}|{spec.bpm}|{spec.duration}|{spec.loopable}|{diversity_level}",
+        "composer-plan-v4",
+    )
+    rng = random.Random(seed)
+    root_midi, scale, tonality = _root_midi_and_scale(spec.key)
+    beat_sec = 60.0 / max(55, min(180, int(spec.bpm)))
+    bar_sec = beat_sec * 4.0
+    total_bars = max(4, int(math.ceil(max(5, spec.duration) / bar_sec)))
+    if spec.loopable:
+        phrase = 4 if total_bars < 12 else 8
+        total_bars = max(phrase, int(math.ceil(total_bars / phrase)) * phrase)
+    progression_name, progression_degrees = _chord_progression_for(spec, profile)
+    chord_progression = []
+    for i, degrees in enumerate(progression_degrees):
+        chord_progression.append(
+            {
+                "bar_mod": i,
+                "name": progression_name.split("-")[i] if "-" in progression_name and i < len(progression_name.split("-")) else f"chord_{i + 1}",
+                "scale_degrees": [int(degree % len(scale)) for degree in degrees],
+                "bass_degree": int(degrees[0] % len(scale)),
+                "color": "seventh" if len(degrees) >= 4 else "triad",
+            }
+        )
+    section_defs = _section_defs(spec.duration, spec.loopable, profile)
+    sections = _allocate_section_bars(total_bars, section_defs, spec.loopable)
+    motif_call = _make_motif(rng, len(scale), diversity_level, profile)
+    motif_response = _variant_motif(motif_call, len(scale), "response", rng)
+    motif_b = _variant_motif(motif_call, len(scale), "b", rng)
+    bass_steps = [0, 6, 8, 11, 14]
+    if profile in {"house", "melodic techno", "acid techno", "trance"}:
+        bass_steps = [2, 4, 6, 10, 12, 14]
+    elif profile == "lofi":
+        bass_steps = [0, 5, 8, 13]
+    elif profile == "ambient":
+        bass_steps = [0]
+    elif profile == "breakbeat":
+        bass_steps = [0, 3, 7, 10, 14]
+    bass_pattern = []
+    for idx, step in enumerate(bass_steps):
+        degree = 0 if idx % 3 != 2 else 4
+        if idx == len(bass_steps) - 1 and diversity_level >= 1:
+            degree = rng.choice([1, 4, 6])
+        bass_pattern.append(
+            {
+                "step": int(step),
+                "degree": int(degree % len(scale)),
+                "octave": -2 if profile not in {"8bit", "lofi"} else -1,
+                "length_steps": 2 if profile != "ambient" else 12,
+                "accent": round(0.78 + 0.18 * (idx % 2 == 0), 3),
+            }
+        )
+    if profile == "breakbeat":
+        kick_steps = [0, 3, 7, 10, 14]
+        snare_steps = [4, 12]
+    elif profile in {"ambient"}:
+        kick_steps = []
+        snare_steps = []
+    elif profile in {"lofi"}:
+        kick_steps = [0, 6, 10]
+        snare_steps = [4, 12]
+    else:
+        kick_steps = [0, 4, 8, 12]
+        if diversity_level >= 1:
+            kick_steps += [14]
+        snare_steps = [4, 12]
+    hat_density = 5 if profile in {"ambient", "lofi"} else 7 + diversity_level
+    hat_steps = _euclidean_hits(hat_density, 16, offset=1 if profile == "lofi" else 0)
+    if profile in {"house", "melodic techno", "acid techno", "trance"}:
+        open_hat_steps = [2, 6, 10, 14]
+    elif profile == "breakbeat":
+        open_hat_steps = [3, 7, 11, 15]
+    else:
+        open_hat_steps = [6, 14]
+    guide_ids = [guide["id"] for guide in technique_guides]
+    plan = {
+        "version": 2,
+        "seed": seed,
+        "style_profile": profile,
+        "root_midi": root_midi,
+        "tonality": tonality,
+        "scale": scale,
+        "bpm": int(spec.bpm),
+        "bar_count": int(total_bars),
+        "phrase_bars": 4 if total_bars < 12 else 8,
+        "selected_techniques": guide_ids,
+        "sections": sections,
+        "chords": {
+            "progression_name": progression_name,
+            "progression": chord_progression,
+            "strong_beat_policy": "melody steps 0/4/8/12 prefer chord tones; weak steps may use passing tones",
+            "voicing": "open" if profile in {"ambient", "synthwave"} else "stabs" if profile in {"house", "ambient techno"} else "soft",
         },
-        master={"target_peak": 0.92, "soft_clip": True},
-    )
+        "motifs": {
+            "call": motif_call,
+            "response": motif_response,
+            "b_variation": motif_b,
+            "development_notes": [
+                "call and response share interval material but differ in rhythm/register",
+                "B variation recombines motif cells and raises energy",
+                "phrase endings allow delay throw or stutter fill",
+            ],
+        },
+        "bass": {
+            "pattern": bass_pattern,
+            "relationship": "leave kick transient space, answer kicks with offbeat root/fifth/octave movement",
+            "tone": "acid" if profile in {"acid techno", "melodic techno"} else "warm" if profile in {"lofi", "house"} else "sub",
+        },
+        "drums": {
+            "kick_steps": sorted(set(kick_steps)),
+            "snare_steps": snare_steps,
+            "hat_steps": hat_steps,
+            "open_hat_steps": open_hat_steps,
+            "fill_policy": "last bar of every phrase adds denser hats, ghost snare, or stutter; section changes get riser/downlifter",
+            "swing": 0.58 if profile == "lofi" else 0.54 if profile == "breakbeat" else 0.50,
+        },
+        "automation": {
+            "sidechain_amount": round(0.12 + 0.25 * float(spec.energy), 3) if profile != "ambient" else 0.05,
+            "filter_start": round(max(0.25, float(spec.brightness) - 0.30), 3),
+            "filter_end": round(min(1.0, float(spec.brightness) + 0.22), 3),
+            "riser_before_drop_bars": 1 if not spec.loopable and spec.duration >= 18 else 0,
+            "delay_throw_on_phrase_end": True,
+            "downlifter_on_drop": not spec.loopable and profile != "ambient",
+        },
+        "mix": {
+            "target_peak": 0.92,
+            "drum_gain": 0.72 if profile != "ambient" else 0.18,
+            "bass_gain": 0.55 if profile != "ambient" else 0.30,
+            "chord_gain": 0.42 if profile != "8bit" else 0.24,
+            "lead_gain": 0.38 if profile != "ambient" else 0.26,
+            "texture_gain": 0.18 if profile in {"lofi", "ambient", "ambient techno"} else 0.08,
+            "reverb_wet": 0.22 if profile not in {"ambient"} else 0.42,
+            "delay_wet": 0.16 if profile not in {"8bit"} else 0.08,
+            "soft_saturation_drive": 1.15 + 0.60 * float(spec.energy),
+        },
+    }
+    return _composition_plan_from_dict(plan)
 
 
-def _plan_from_dict(data: dict[str, Any], fallback: RenderPlan) -> RenderPlan:
+def _default_plan(spec: MusicSpec, diversity_level: int, composer: CompositionPlan | dict[str, Any] | None = None) -> RenderPlan:
+    profile = _profile_name_from_text(f"{spec.mood} {' '.join(spec.instruments)} {' '.join(spec.effects)}")
+    if composer is None:
+        pseudo_brief = PromptBrief(
+            original_prompt=spec.mood,
+            enriched_prompt=f"fallback {spec.mood} renderer plan",
+            style=profile,
+            references=[],
+        )
+        guides = _select_technique_guides(pseudo_brief, spec, diversity_level)
+        composer = _compose_arrangement(pseudo_brief, spec, guides, diversity_level)
+    composer_data = _composer_to_dict(composer)
+    if profile == "ambient":
+        drums_pattern = "ambient_no_drums"
+        bass_pattern = "sub_drone"
+        melody_shape = "random_walk"
+        voicing = "drone"
+        noise = "air"
+    elif profile == "8bit":
+        drums_pattern = "8bit_arpeggio_beat"
+        bass_pattern = "root_octave"
+        melody_shape = "arpeggio"
+        voicing = "stabs"
+        noise = "none"
+    elif profile == "lofi":
+        drums_pattern = "lofi_swing"
+        bass_pattern = "warm_roots"
+        melody_shape = "call_response"
+        voicing = "open"
+        noise = "vinyl"
+    elif profile in {"melodic techno", "acid techno", "ambient techno"}:
+        drums_pattern = "minimal_techno"
+        bass_pattern = "acid_bass" if profile != "ambient techno" else "syncopated_pulse"
+        melody_shape = "motif_variation"
+        voicing = "stabs"
+        noise = "space"
+    elif profile == "breakbeat":
+        drums_pattern = "breakbeat"
+        bass_pattern = "syncopated_pulse"
+        melody_shape = "call_response"
+        voicing = "stabs"
+        noise = "tape"
+    else:
+        drums_pattern = "minimal_techno" if spec.energy > 0.60 else "lofi_swing"
+        bass_pattern = "syncopated_pulse"
+        melody_shape = "motif_variation"
+        voicing = "soft"
+        noise = "tape"
     return RenderPlan(
-        tracks=data.get("tracks") if isinstance(data.get("tracks"), list) else fallback.tracks,
-        drums=data.get("drums") if isinstance(data.get("drums"), dict) else fallback.drums,
-        bass=data.get("bass") if isinstance(data.get("bass"), dict) else fallback.bass,
-        chords=data.get("chords") if isinstance(data.get("chords"), dict) else fallback.chords,
-        melody=data.get("melody") if isinstance(data.get("melody"), dict) else fallback.melody,
-        texture=data.get("texture") if isinstance(data.get("texture"), dict) else fallback.texture,
-        effects=data.get("effects") if isinstance(data.get("effects"), dict) else fallback.effects,
-        master=data.get("master") if isinstance(data.get("master"), dict) else fallback.master,
+        tracks=[
+            {"role": "drums", "name": drums_pattern, "gain": 1.0},
+            {"role": "bass", "name": bass_pattern, "gain": 1.0},
+            {"role": "chords", "name": "pad" if voicing == "drone" else "warm_keys", "gain": 0.9},
+            {"role": "melody", "name": "chip_lead" if profile == "8bit" else "bell" if profile == "ambient" else "wavetable_lead", "gain": 1.0},
+            {"role": "texture", "name": "noise_texture", "gain": 0.6},
+        ],
+        drums={"pattern": drums_pattern, "swing": composer_data.get("drums", {}).get("swing", 0.5)},
+        bass={"pattern": bass_pattern, "tone": composer_data.get("bass", {}).get("tone", "warm")},
+        chords={"progression": composer_data.get("chords", {}).get("progression_name", "i-VI-III-VII"), "voicing": voicing},
+        melody={"shape": melody_shape, "register": "high" if profile in {"8bit", "trance"} else "mid"},
+        texture={"noise": noise},
+        effects={
+            "delay": True,
+            "reverb": True,
+            "lowpass": profile in {"lofi", "ambient"},
+            "sidechain": profile != "ambient",
+            "riser": not spec.loopable and profile != "ambient",
+        },
+        master={"target_peak": composer_data.get("mix", {}).get("target_peak", 0.92)},
+        composer=composer_data,
     )
+
+
+def _plan_from_dict(data: dict[str, Any], fallback: RenderPlan, composer: CompositionPlan | dict[str, Any] | None = None) -> RenderPlan:
+    allowed_drums = {"lofi_swing", "8bit_arpeggio_beat", "ambient_no_drums", "breakbeat", "minimal_techno"}
+    allowed_bass = {"root_octave", "warm_roots", "acid_bass", "sub_drone", "syncopated_pulse"}
+    allowed_prog = {"i-VI-III-VII", "i-iv-V-i", "I-V-vi-IV", "ii-V-I", "modal_drone"}
+    allowed_voicing = {"soft", "open", "stabs", "drone"}
+    allowed_shape = {"arpeggio", "call_response", "pentatonic", "stepwise", "random_walk", "motif_variation"}
+    allowed_register = {"low", "mid", "high"}
+    allowed_noise = {"vinyl", "tape", "air", "space", "none"}
+
+    def pick(obj: dict[str, Any], key: str, fallback_value: str, allowed: set[str]) -> str:
+        value = str(obj.get(key, fallback_value))
+        return value if value in allowed else fallback_value
+
+    tracks = data.get("tracks", fallback.tracks)
+    if not isinstance(tracks, list):
+        tracks = fallback.tracks
+    clean_tracks: list[dict[str, Any]] = []
+    for item in tracks[:8]:
+        if not isinstance(item, dict):
+            continue
+        clean_tracks.append(
+            {
+                "role": str(item.get("role", "melody"))[:40],
+                "name": str(item.get("name", "wavetable_lead"))[:60],
+                "gain": _safe_float(item.get("gain"), 1.0, 0.1, 1.5),
+            }
+        )
+    drums = data.get("drums", {}) if isinstance(data.get("drums"), dict) else {}
+    bass = data.get("bass", {}) if isinstance(data.get("bass"), dict) else {}
+    chords = data.get("chords", {}) if isinstance(data.get("chords"), dict) else {}
+    melody = data.get("melody", {}) if isinstance(data.get("melody"), dict) else {}
+    texture = data.get("texture", {}) if isinstance(data.get("texture"), dict) else {}
+    effects = data.get("effects", {}) if isinstance(data.get("effects"), dict) else {}
+    master = data.get("master", {}) if isinstance(data.get("master"), dict) else {}
+    return RenderPlan(
+        tracks=clean_tracks or fallback.tracks,
+        drums={"pattern": pick(drums, "pattern", fallback.drums.get("pattern", "minimal_techno"), allowed_drums), "swing": _safe_float(drums.get("swing"), fallback.drums.get("swing", 0.5), 0.45, 0.65)},
+        bass={"pattern": pick(bass, "pattern", fallback.bass.get("pattern", "syncopated_pulse"), allowed_bass), "tone": str(bass.get("tone", fallback.bass.get("tone", "warm")))[:40]},
+        chords={"progression": pick(chords, "progression", fallback.chords.get("progression", "i-VI-III-VII"), allowed_prog), "voicing": pick(chords, "voicing", fallback.chords.get("voicing", "soft"), allowed_voicing)},
+        melody={"shape": pick(melody, "shape", fallback.melody.get("shape", "motif_variation"), allowed_shape), "register": pick(melody, "register", fallback.melody.get("register", "mid"), allowed_register)},
+        texture={"noise": pick(texture, "noise", fallback.texture.get("noise", "tape"), allowed_noise)},
+        effects={
+            "delay": bool(effects.get("delay", fallback.effects.get("delay", True))),
+            "reverb": bool(effects.get("reverb", fallback.effects.get("reverb", True))),
+            "lowpass": bool(effects.get("lowpass", fallback.effects.get("lowpass", False))),
+            "sidechain": bool(effects.get("sidechain", fallback.effects.get("sidechain", True))),
+            "riser": bool(effects.get("riser", fallback.effects.get("riser", True))),
+        },
+        master={"target_peak": _safe_float(master.get("target_peak"), fallback.master.get("target_peak", 0.92), 0.3, 0.98)},
+        composer=_composer_to_dict(composer) or fallback.composer,
+    )
+
+
+def _midi_to_hz(midi: float) -> float:
+    return 440.0 * (2.0 ** ((midi - 69.0) / 12.0))
+
+
+def _degree_to_midi(root: int, scale: list[int], degree: int, octave: int = 0) -> int:
+    if not scale:
+        scale = MINOR_SCALE
+    scale_len = len(scale)
+    return int(root + scale[degree % scale_len] + 12 * (octave + degree // scale_len))
+
+
+def _adsr(length: int, sr: int, attack: float, decay: float, sustain: float, release: float) -> np.ndarray:
+    if length <= 0:
+        return np.zeros(0, dtype=np.float32)
+    attack_n = max(1, min(length, int(attack * sr)))
+    decay_n = max(1, min(length - attack_n, int(decay * sr))) if length > attack_n else 0
+    release_n = max(1, min(length - attack_n - decay_n, int(release * sr))) if length > attack_n + decay_n else 0
+    sustain_n = max(0, length - attack_n - decay_n - release_n)
+    parts = [np.linspace(0.0, 1.0, attack_n, endpoint=False, dtype=np.float32)]
+    if decay_n:
+        parts.append(np.linspace(1.0, sustain, decay_n, endpoint=False, dtype=np.float32))
+    if sustain_n:
+        parts.append(np.full(sustain_n, sustain, dtype=np.float32))
+    if release_n:
+        start = sustain if decay_n or sustain_n else 1.0
+        parts.append(np.linspace(start, 0.0, release_n, endpoint=True, dtype=np.float32))
+    env = np.concatenate(parts) if parts else np.zeros(length, dtype=np.float32)
+    if len(env) < length:
+        env = np.pad(env, (0, length - len(env)))
+    return env[:length]
+
+
+def _bandlimited_square(freq: float, t: np.ndarray, sr: int, harmonics: int = 16) -> np.ndarray:
+    max_h = min(harmonics, max(1, int((sr * 0.45) // max(freq, 1.0))))
+    wave_out = np.zeros_like(t, dtype=np.float32)
+    for h in range(1, max_h + 1, 2):
+        wave_out += (1.0 / h) * np.sin(2.0 * np.pi * freq * h * t).astype(np.float32)
+    peak = np.max(np.abs(wave_out)) if len(wave_out) else 1.0
+    return wave_out / max(float(peak), 1e-6)
+
+
+def _bandlimited_saw(freq: float, t: np.ndarray, sr: int, brightness: float = 0.7, harmonics: int = 18) -> np.ndarray:
+    max_h = min(harmonics, max(1, int((sr * 0.45) // max(freq, 1.0))))
+    wave_out = np.zeros_like(t, dtype=np.float32)
+    damping = 0.35 + 0.85 * _clamp(brightness, 0.0, 1.0)
+    for h in range(1, max_h + 1):
+        wave_out += ((-1.0) ** (h + 1)) * (damping ** (h - 1)) / h * np.sin(2.0 * np.pi * freq * h * t).astype(np.float32)
+    peak = np.max(np.abs(wave_out)) if len(wave_out) else 1.0
+    return wave_out / max(float(peak), 1e-6)
+
+
+def _triangle(freq: float, t: np.ndarray, sr: int) -> np.ndarray:
+    max_h = min(15, max(1, int((sr * 0.45) // max(freq, 1.0))))
+    wave_out = np.zeros_like(t, dtype=np.float32)
+    sign = 1.0
+    for h in range(1, max_h + 1, 2):
+        wave_out += sign * (1.0 / (h * h)) * np.sin(2.0 * np.pi * freq * h * t).astype(np.float32)
+        sign *= -1.0
+    peak = np.max(np.abs(wave_out)) if len(wave_out) else 1.0
+    return wave_out / max(float(peak), 1e-6)
+
+
+def _clip_add(target: np.ndarray, start: int, source: np.ndarray, gain: float = 1.0) -> None:
+    if start >= len(target) or len(source) == 0:
+        return
+    if start < 0:
+        source = source[-start:]
+        start = 0
+    end = min(len(target), start + len(source))
+    if end <= start:
+        return
+    target[start:end] += (source[: end - start] * gain).astype(np.float32)
+
+
+def _add_note(
+    target: np.ndarray,
+    start_sec: float,
+    dur_sec: float,
+    midi: float,
+    velocity: float,
+    sr: int,
+    synth: str,
+    brightness: float,
+    rng: np.random.Generator,
+) -> None:
+    start = int(max(0.0, start_sec) * sr)
+    length = int(max(0.03, dur_sec) * sr)
+    if start >= len(target) or length <= 0:
+        return
+    length = min(length, len(target) - start)
+    t = np.arange(length, dtype=np.float32) / float(sr)
+    freq = _midi_to_hz(midi)
+    synth = synth.lower()
+    if "chip" in synth or "8bit" in synth or "square" in synth:
+        wave_data = _bandlimited_square(freq, t, sr, harmonics=13)
+        env = _adsr(length, sr, 0.004, 0.04, 0.45, 0.035)
+    elif "acid" in synth or "bass" in synth and "warm" not in synth:
+        sweep = np.exp(-t * (5.0 / max(dur_sec, 0.05))).astype(np.float32)
+        wave_data = 0.60 * np.sin(2 * np.pi * freq * t).astype(np.float32) + 0.40 * _bandlimited_saw(freq, t, sr, 0.35 + 0.55 * sweep.mean())
+        wave_data = np.tanh(wave_data * (1.25 + 1.2 * sweep))
+        env = _adsr(length, sr, 0.006, 0.05, 0.62, 0.060)
+    elif "pad" in synth or "drone" in synth:
+        detune = 0.003 + 0.003 * brightness
+        wave_data = (
+            0.48 * np.sin(2 * np.pi * freq * t)
+            + 0.28 * np.sin(2 * np.pi * freq * (1.0 + detune) * t + 0.4)
+            + 0.18 * np.sin(2 * np.pi * freq * 2.0 * t + 1.1)
+            + 0.10 * np.sin(2 * np.pi * freq * 3.0 * t + 2.0)
+        ).astype(np.float32)
+        env = _adsr(length, sr, min(0.8, dur_sec * 0.35), 0.2, 0.82, min(1.0, dur_sec * 0.35))
+    elif "bell" in synth or "fm" in synth:
+        mod_env = np.exp(-t * 5.0).astype(np.float32)
+        mod = np.sin(2 * np.pi * freq * 2.01 * t).astype(np.float32) * (3.0 + 5.0 * brightness) * mod_env
+        wave_data = np.sin(2 * np.pi * freq * t + mod).astype(np.float32) + 0.25 * np.sin(2 * np.pi * freq * 3.0 * t).astype(np.float32)
+        env = _adsr(length, sr, 0.006, 0.18, 0.18, min(0.65, dur_sec * 0.5))
+    elif "pluck" in synth or "key" in synth or "warm" in synth:
+        wave_data = (0.70 * np.sin(2 * np.pi * freq * t) + 0.20 * _triangle(freq * 2.0, t, sr) + 0.10 * _bandlimited_square(freq, t, sr, 7)).astype(np.float32)
+        env = _adsr(length, sr, 0.008, 0.12, 0.35, 0.18)
+    else:
+        wave_data = (0.55 * _bandlimited_saw(freq, t, sr, brightness) + 0.35 * np.sin(2 * np.pi * freq * t).astype(np.float32) + 0.10 * _triangle(freq, t, sr)).astype(np.float32)
+        env = _adsr(length, sr, 0.010, 0.08, 0.55, 0.10)
+    # Tiny deterministic imperfection for lofi/warm tones, never enough to detune out of key.
+    if "warm" in synth or "lofi" in synth:
+        wobble = 1.0 + 0.006 * np.sin(2 * np.pi * 3.1 * t + float(rng.random()))
+        wave_data *= wobble.astype(np.float32)
+    _clip_add(target, start, wave_data * env, velocity)
+
+
+def _add_kick(target: np.ndarray, start_sec: float, sr: int, amp: float = 1.0) -> None:
+    length = int(0.52 * sr)
+    t = np.arange(length, dtype=np.float32) / float(sr)
+    freq = 48.0 + 82.0 * np.exp(-t * 13.0)
+    phase = 2 * np.pi * np.cumsum(freq) / float(sr)
+    env = np.exp(-t * 8.0).astype(np.float32)
+    click = np.exp(-t * 90.0).astype(np.float32) * np.sin(2 * np.pi * 850.0 * t).astype(np.float32)
+    body = np.sin(phase).astype(np.float32)
+    _clip_add(target, int(start_sec * sr), np.tanh((body * env + 0.18 * click) * 1.8), 0.90 * amp)
+
+
+def _add_snare(target: np.ndarray, start_sec: float, sr: int, rng: np.random.Generator, amp: float = 1.0) -> None:
+    length = int(0.34 * sr)
+    t = np.arange(length, dtype=np.float32) / float(sr)
+    noise = rng.standard_normal(length).astype(np.float32)
+    noise = noise - _moving_average(noise, 12)
+    env = np.exp(-t * 13.0).astype(np.float32)
+    tone = np.sin(2 * np.pi * 185.0 * t).astype(np.float32) * np.exp(-t * 9.0).astype(np.float32)
+    _clip_add(target, int(start_sec * sr), np.tanh((0.65 * noise + 0.25 * tone) * env * 1.4), 0.48 * amp)
+
+
+def _add_hat(target: np.ndarray, start_sec: float, sr: int, rng: np.random.Generator, amp: float = 1.0, open_hat: bool = False) -> None:
+    length = int((0.18 if open_hat else 0.065) * sr)
+    t = np.arange(length, dtype=np.float32) / float(sr)
+    noise = rng.standard_normal(length).astype(np.float32)
+    noise = noise - _moving_average(noise, 6)
+    env = np.exp(-t * (11.0 if open_hat else 42.0)).astype(np.float32)
+    _clip_add(target, int(start_sec * sr), noise * env, (0.16 if open_hat else 0.10) * amp)
+
+
+def _add_clap(target: np.ndarray, start_sec: float, sr: int, rng: np.random.Generator, amp: float = 1.0) -> None:
+    for offset in (0.0, 0.012, 0.026):
+        length = int(0.12 * sr)
+        t = np.arange(length, dtype=np.float32) / float(sr)
+        noise = rng.standard_normal(length).astype(np.float32)
+        env = np.exp(-t * 20.0).astype(np.float32)
+        _clip_add(target, int((start_sec + offset) * sr), noise * env, 0.11 * amp)
+
+
+def _moving_average(audio: np.ndarray, window: int) -> np.ndarray:
+    window = int(max(1, window))
+    if window <= 1 or len(audio) == 0:
+        return audio.astype(np.float32, copy=False)
+    padded = np.pad(audio.astype(np.float32, copy=False), (window - 1, 0), mode="edge")
+    cumsum = np.cumsum(padded, dtype=np.float64)
+    cumsum = np.pad(cumsum, (1, 0), mode="constant")
+    out = (cumsum[window:] - cumsum[:-window]) / float(window)
+    return out[: len(audio)].astype(np.float32)
+
+
+def _delay(audio: np.ndarray, sr: int, bpm: int, wet: float = 0.16, feedback: float = 0.34, dotted: bool = False) -> np.ndarray:
+    if wet <= 0.0 or len(audio) == 0:
+        return audio
+    beat = 60.0 / max(55, min(180, bpm))
+    delay_sec = beat * (0.75 if dotted else 0.5)
+    delay_n = max(1, int(delay_sec * sr))
+    out = audio.astype(np.float32, copy=True)
+    tap = audio.astype(np.float32, copy=False)
+    for repeat in range(1, 4):
+        d = delay_n * repeat
+        if d >= len(out):
+            break
+        out[d:] += tap[:-d] * (wet * (feedback ** (repeat - 1)))
+    return out.astype(np.float32)
+
+
+def _reverb(audio: np.ndarray, sr: int, wet: float = 0.22) -> np.ndarray:
+    if wet <= 0.0 or len(audio) == 0:
+        return audio
+    out = audio.astype(np.float32, copy=True)
+    taps = [(0.019, 0.28), (0.031, 0.22), (0.047, 0.18), (0.073, 0.14), (0.109, 0.10), (0.151, 0.07)]
+    for delay_sec, gain in taps:
+        d = int(delay_sec * sr)
+        if d <= 0 or d >= len(out):
+            continue
+        out[d:] += audio[:-d] * (wet * gain)
+    return out.astype(np.float32)
+
+
+def _soft_saturate(audio: np.ndarray, drive: float) -> np.ndarray:
+    drive = max(0.2, float(drive))
+    return (np.tanh(audio * drive) / math.tanh(drive)).astype(np.float32)
+
+
+def _sidechain_envelope(length: int, sr: int, kick_times: list[float], amount: float, release_sec: float) -> np.ndarray:
+    env = np.ones(length, dtype=np.float32)
+    if amount <= 0.0:
+        return env
+    release_n = max(1, int(release_sec * sr))
+    curve = 1.0 - amount * np.exp(-np.linspace(0.0, 5.0, release_n, dtype=np.float32))
+    curve = np.clip(curve, 0.15, 1.0)
+    for kick_time in kick_times:
+        start = int(kick_time * sr)
+        if start >= length:
+            continue
+        end = min(length, start + release_n)
+        env[start:end] = np.minimum(env[start:end], curve[: end - start])
+    return env
+
+
+def _section_for_bar(composer: dict[str, Any], bar: int) -> dict[str, Any]:
+    sections = composer.get("sections") or []
+    for section in sections:
+        start = int(section.get("start_bar", 0))
+        end = start + int(section.get("bars", 1))
+        if start <= bar < end:
+            return section
+    return sections[-1] if sections else {"id": "A", "role": "hook", "energy": 0.8, "start_bar": 0, "bars": 4}
+
+
+def _chord_for_bar(composer: dict[str, Any], bar: int) -> dict[str, Any]:
+    progression = composer.get("chords", {}).get("progression") or []
+    if not progression:
+        return {"scale_degrees": [0, 2, 4], "bass_degree": 0, "name": "i"}
+    return progression[bar % len(progression)]
+
+
+def _step_time(bar: int, step: int, step_sec: float, swing: float = 0.5) -> float:
+    sixteenth = bar * 16 + step
+    swing_offset = 0.0
+    if sixteenth % 2 == 1:
+        swing_offset = (swing - 0.5) * step_sec
+    return (bar * 16 + step) * step_sec + swing_offset
+
+
+def _make_loopable(audio: np.ndarray, sr: int) -> np.ndarray:
+    if len(audio) < sr // 2:
+        return audio
+    fade = min(int(0.18 * sr), len(audio) // 12)
+    if fade <= 8:
+        return audio
+    ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+    head = audio[:fade].copy()
+    tail = audio[-fade:].copy()
+    blend = tail * (1.0 - ramp) + head * ramp
+    audio[:fade] = blend
+    audio[-fade:] = blend
+    return audio
+
+
+def _write_wav(path: Path, audio: np.ndarray, sample_rate: int, target_peak: float = 0.92) -> None:
+    audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+    audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
+    if len(audio) == 0:
+        audio = np.zeros(sample_rate, dtype=np.float32)
+    peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
+    if peak > 1e-6:
+        audio = audio / peak * float(target_peak)
+    pcm16 = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm16.tobytes())
 
 
 class PythonMusicRenderer:
-    NOTE_OFFSETS = {"C": 0, "C#": 1, "Db": 1, "D": 2, "D#": 3, "Eb": 3, "E": 4, "F": 5, "F#": 6, "Gb": 6, "G": 7, "G#": 8, "Ab": 8, "A": 9, "A#": 10, "Bb": 10, "B": 11}
-    MINOR = [0, 2, 3, 5, 7, 8, 10]
-    MAJOR = [0, 2, 4, 5, 7, 9, 11]
-    DRUM_PATTERNS = {"lofi_swing", "8bit_arpeggio_beat", "ambient_no_drums", "breakbeat", "minimal_techno", "four_on_floor", "half_time"}
-    BASS_PATTERNS = {"root_octave", "warm_roots", "acid_bass", "sub_drone", "syncopated_pulse"}
-    CHORD_PROGRESSIONS = {
-        "i-VI-III-VII": [0, 5, 2, 6],
-        "i-iv-V-i": [0, 3, 4, 0],
-        "I-V-vi-IV": [0, 4, 5, 3],
-        "ii-V-I": [1, 4, 0],
-        "modal_drone": [0],
-    }
-    MELODY_SHAPES = {"arpeggio", "call_response", "pentatonic", "stepwise", "random_walk", "motif_variation", "periodic"}
-    VOICE_ENGINES = {
-        "chip_lead": {"shape": "square", "attack": 0.003, "release": 0.055, "gain": 1.0, "brightness": 0.18},
-        "warm_keys": {"shape": "triangle", "attack": 0.018, "release": 0.16, "gain": 0.9, "brightness": -0.1},
-        "pluck": {"shape": "saw", "attack": 0.004, "release": 0.09, "gain": 0.82, "brightness": 0.1},
-        "pad": {"shape": "sine", "attack": 0.08, "release": 0.32, "gain": 0.78, "brightness": -0.05},
-        "bell": {"shape": "sine", "attack": 0.006, "release": 0.36, "gain": 0.72, "brightness": 0.2},
-        "acid_bass": {"shape": "saw", "attack": 0.003, "release": 0.07, "gain": 1.0, "brightness": 0.25},
-        "sub_drone": {"shape": "sine", "attack": 0.05, "release": 0.28, "gain": 0.88, "brightness": -0.2},
-        "warm_bass": {"shape": "triangle", "attack": 0.012, "release": 0.12, "gain": 0.9, "brightness": -0.08},
-    }
+    """Fixed fallback renderer with a local structured composition layer.
 
-    def render(self, spec: MusicSpec, plan: RenderPlan, out_path: Path, sample_rate: int, diversity_level: int = DEFAULT_DIVERSITY_LEVEL) -> None:
-        sample_rate = _safe_int(sample_rate, DEFAULT_SAMPLE_RATE, 16000, 48000)
-        diversity_level = _normalize_diversity_level(diversity_level)
-        duration = max(5, min(HARD_MAX_SECONDS, int(spec.duration)))
-        bpm = max(55, min(180, int(spec.bpm)))
-        beat = 60.0 / bpm
-        bar = beat * 4
-        if spec.loopable:
-            max_bars = max(2, int(HARD_MAX_SECONDS / bar))
-            bars = min(max_bars, max(2, round(duration / bar)))
-            duration = int(round(bars * bar))
+    This renderer is intentionally dependency-light: it only uses numpy and the standard library.  It
+    consumes a RenderPlan/CompositionPlan rather than inventing a short note list at audio time, so model
+    failures still produce a theme, answer phrase, bass/kick relationship, section movement, and simple
+    production processing.
+    """
 
-        total_samples = int(duration * sample_rate)
-        audio = np.zeros(total_samples, dtype=np.float32)
-        root, scale = self._scale(spec.key)
-        rng = random.Random(self._seed(spec, plan))
-        arrangement = self._build_arrangement(total_samples / sample_rate, bar, spec, diversity_level)
-
-        audio += self._render_drums(total_samples, sample_rate, beat, spec, plan, rng, arrangement, diversity_level)
-        audio += self._render_bass(total_samples, sample_rate, beat, root, scale, spec, plan, rng, arrangement)
-        audio += self._render_chords(total_samples, sample_rate, bar, root, scale, spec, plan, rng, arrangement)
-        audio += self._render_melody(total_samples, sample_rate, beat, root, scale, spec, plan, rng, arrangement)
-        audio += self._render_texture(total_samples, sample_rate, spec, plan, rng)
-
-        audio = self._apply_effects(audio, sample_rate, spec, plan)
-        audio = self._apply_arrangement_envelope(audio, sample_rate, bar, arrangement, spec.loopable)
-        if spec.loopable:
-            audio = self._make_loopable(audio, sample_rate)
-        audio = self._master(audio, plan)
-        self._write_wav(out_path, audio, sample_rate)
-
-    def _seed(self, spec: MusicSpec, plan: RenderPlan | None = None) -> int:
-        plan_text = ""
-        if plan is not None:
-            plan_text = json.dumps(plan.__dict__, ensure_ascii=False, sort_keys=True, default=str)[:2000]
-        basis = f"{spec.mood}|{spec.key}|{spec.bpm}|{spec.instruments}|{spec.effects}|{plan_text}"
-        return sum(ord(ch) * (idx + 1) for idx, ch in enumerate(basis)) % (2**32)
-
-    def _scale(self, key: str) -> tuple[int, list[int]]:
-        parts = key.replace("minor", " minor").replace("major", " major").split()
-        note = parts[0] if parts else "C"
-        root = 60 + self.NOTE_OFFSETS.get(note, 0)
-        scale = self.MINOR if "minor" in key.lower() or "小" in key else self.MAJOR
-        return root, scale
-
-    def _section(self, plan: RenderPlan, name: str) -> dict[str, Any]:
-        value = getattr(plan, name, {})
-        return value if isinstance(value, dict) else {}
-
-    def _choice(self, value: Any, allowed: set[str], default: str) -> str:
-        raw = str(value or "").strip()
-        if not raw:
-            return default
-        for item in allowed:
-            if raw == item or raw.lower() == item.lower():
-                return item
-        return default
-
-    def _float_value(self, value: Any, default: float, low: float, high: float) -> float:
-        try:
-            parsed = float(value)
-        except Exception:
-            parsed = default
-        return _clamp(parsed, low, high)
-
-    def _noise(self, n: int, rng: random.Random) -> np.ndarray:
-        np_rng = np.random.default_rng(rng.randrange(0, 2**32))
-        return np_rng.uniform(-1.0, 1.0, n).astype(np.float32)
-
-    def _style_text(self, spec: MusicSpec) -> str:
-        return f"{spec.mood} {' '.join(spec.instruments)} {' '.join(spec.effects)}".lower()
-
-    def _default_drum_pattern(self, spec: MusicSpec) -> str:
-        text = self._style_text(spec)
-        if "ambient" in text or "氛围" in text:
-            return "ambient_no_drums"
-        if "lofi" in text or "雨" in text:
-            return "lofi_swing"
-        if "8bit" in text or "chip" in text or "像素" in text:
-            return "8bit_arpeggio_beat"
-        if spec.energy > 0.68:
-            return "minimal_techno"
-        return "breakbeat" if spec.density > 0.6 else "half_time"
-
-    def _default_bass_pattern(self, spec: MusicSpec) -> str:
-        text = self._style_text(spec)
-        if "ambient" in text or "sub" in text:
-            return "sub_drone"
-        if "acid" in text or spec.energy > 0.72:
-            return "acid_bass"
-        if "lofi" in text:
-            return "warm_roots"
-        return "root_octave" if "8bit" in text or "chip" in text else "syncopated_pulse"
-
-    def _default_melody_shape(self, spec: MusicSpec) -> str:
-        text = self._style_text(spec)
-        if "8bit" in text or "chip" in text:
-            return "arpeggio"
-        if "lofi" in text:
-            return "pentatonic"
-        if "ambient" in text:
-            return "stepwise"
-        return "call_response" if spec.energy > 0.65 else "motif_variation"
-
-    def _progression_name(self, plan: RenderPlan, spec: MusicSpec) -> str:
-        value = self._section(plan, "chords").get("progression")
-        if isinstance(value, list):
-            raw = "-".join(str(item).strip() for item in value if str(item).strip())
-        else:
-            raw = str(value or "").strip()
-        compact = raw.replace(" ", "").replace("_", "-").replace("–", "-").replace("—", "-")
-        exact = {
-            "i-VI-III-VII": "i-VI-III-VII",
-            "i-iv-V-i": "i-iv-V-i",
-            "I-V-vi-IV": "I-V-vi-IV",
-            "ii-V-I": "ii-V-I",
-            "modal-drone": "modal_drone",
-            "modal_drone": "modal_drone",
-        }
-        if compact in exact:
-            return exact[compact]
-        lowered = compact.lower()
-        aliases = {
-            "i-vi-iii-vii": "i-VI-III-VII",
-            "1-6-3-7": "i-VI-III-VII",
-            "i-iv-v-i": "i-iv-V-i",
-            "1-4-5-1": "i-iv-V-i",
-            "i-v-vi-iv": "I-V-vi-IV",
-            "1-5-6-4": "I-V-vi-IV",
-            "ii-v-i": "ii-V-I",
-            "2-5-1": "ii-V-I",
-        }
-        if lowered in aliases:
-            return aliases[lowered]
-        if "modal" in lowered or "drone" in lowered:
-            return "modal_drone"
-        text = self._style_text(spec)
-        if "ambient" in text:
-            return "modal_drone"
-        if "lofi" in text:
-            return "ii-V-I"
-        if spec.brightness > 0.64:
-            return "I-V-vi-IV"
-        return "i-VI-III-VII"
-
-    def _chord_degrees(self, plan: RenderPlan, spec: MusicSpec) -> list[int]:
-        return self.CHORD_PROGRESSIONS[self._progression_name(plan, spec)]
-
-    def _scale_degree_midi(self, root: int, scale: list[int], degree: int, octave: int = 0) -> int:
-        wrapped = degree // len(scale)
-        return root + octave + scale[degree % len(scale)] + wrapped * 12
-
-    def _track_gain(self, plan: RenderPlan, role: str, default: float) -> float:
-        tracks = plan.tracks if isinstance(plan.tracks, list) else []
-        for track in tracks:
-            if not isinstance(track, dict):
-                continue
-            track_role = str(track.get("role", "")).lower()
-            name = str(track.get("name", "")).lower()
-            if track_role == role or (role == "melody" and "lead" in name) or (role == "bass" and "bass" in name):
-                return self._float_value(track.get("gain", default), default, 0.1, 1.5)
-        return default
-
-    def _voice_engine_name(self, role: str, spec: MusicSpec, plan: RenderPlan) -> str:
-        candidates: list[str] = []
-        section_name = "chords" if role == "chords" else role
-        section = self._section(plan, section_name)
-        for key in ("voice", "instrument", "engine", "name"):
-            if section.get(key):
-                candidates.append(str(section[key]))
-        tracks = plan.tracks if isinstance(plan.tracks, list) else []
-        for track in tracks:
-            if isinstance(track, dict):
-                role_text = str(track.get("role", "")).lower()
-                name = str(track.get("name", ""))
-                if role_text == role or not role_text:
-                    candidates.append(name)
-            else:
-                candidates.append(str(track))
-        candidates.extend(spec.instruments)
-        text = " ".join(candidates).lower()
-
-        if role == "bass":
-            if "acid" in text:
-                return "acid_bass"
-            if "sub" in text or "drone" in text:
-                return "sub_drone"
-            if "8bit" in text or "chip" in text:
-                return "chip_lead"
-            return "warm_bass"
-        if role == "chords":
-            if "pad" in text or "ambient" in text:
-                return "pad"
-            if "pluck" in text or "8bit" in text or "chip" in text:
-                return "pluck"
-            if "bell" in text:
-                return "bell"
-            return "warm_keys"
-        if "bell" in text:
-            return "bell"
-        if "pluck" in text:
-            return "pluck"
-        if "8bit" in text or "chip" in text or "lead" in text:
-            return "chip_lead"
-        if "pad" in text or "ambient" in text:
-            return "pad"
-        return "warm_keys"
-
-    def _voice_engine(self, role: str, spec: MusicSpec, plan: RenderPlan) -> dict[str, Any]:
-        return self.VOICE_ENGINES[self._voice_engine_name(role, spec, plan)]
-
-    def _build_arrangement(self, duration: float, bar: float, spec: MusicSpec, diversity_level: int) -> list[dict[str, Any]]:
-        bars = max(1, int(math.ceil(duration / bar)))
-        if diversity_level <= 0 or bars < 8:
-            return [self._segment(0, bars, "main_a")]
-
-        if spec.loopable:
-            if bars < 16:
-                split = max(4, bars // 2)
-                return [
-                    self._segment(0, split, "main_a"),
-                    self._segment(split, bars, "main_a"),
-                ]
-            q1 = max(4, bars // 4)
-            q3 = max(q1 + 1, bars - q1)
-            return [
-                self._segment(0, q1, "main_a"),
-                self._segment(q1, q3, "main_b" if diversity_level >= 2 else "main_a"),
-                self._segment(q3, bars, "main_a"),
-            ]
-
-        if bars < 16:
-            intro = max(1, bars // 6)
-            outro = max(1, bars // 6)
-            main_end = max(intro + 1, bars - outro)
-            return [
-                self._segment(0, intro, "intro"),
-                self._segment(intro, main_end, "main_a"),
-                self._segment(main_end, bars, "outro"),
-            ]
-
-        intro = min(4, max(2, bars // 10))
-        outro = min(4, max(2, bars // 10))
-        break_len = min(4, max(2, bars // 12)) if diversity_level >= 1 and bars >= 24 else 0
-        body = max(4, bars - intro - outro - break_len)
-        a_len = max(4, body // 2)
-        b_len = max(4, body - a_len)
-        start_b = intro + a_len
-        start_break = start_b + b_len
-        start_final = start_break + break_len
-        segments = [
-            self._segment(0, intro, "intro"),
-            self._segment(intro, start_b, "main_a"),
-            self._segment(start_b, start_break, "main_b" if diversity_level >= 2 else "main_a"),
-        ]
-        if break_len > 0:
-            segments.append(self._segment(start_break, start_final, "break"))
-        segments.append(self._segment(start_final, bars - outro, "main_b" if diversity_level >= 2 else "main_a"))
-        segments.append(self._segment(bars - outro, bars, "outro"))
-        return [segment for segment in segments if int(segment["end_bar"]) > int(segment["start_bar"])]
-
-    def _segment(self, start_bar: int, end_bar: int, label: str) -> dict[str, Any]:
-        profiles = {
-            "intro": {"drums": 0.35, "bass": 0.5, "chords": 0.85, "melody": 0.15, "density": -0.25, "melody_shift": 0},
-            "main_a": {"drums": 1.0, "bass": 1.0, "chords": 1.0, "melody": 0.9, "density": 0.0, "melody_shift": 0},
-            "main_b": {"drums": 1.08, "bass": 1.04, "chords": 0.95, "melody": 1.05, "density": 0.18, "melody_shift": 1},
-            "break": {"drums": 0.2, "bass": 0.25, "chords": 0.65, "melody": 0.45, "density": -0.38, "melody_shift": 2},
-            "outro": {"drums": 0.28, "bass": 0.45, "chords": 0.8, "melody": 0.18, "density": -0.25, "melody_shift": 0},
-        }
-        segment = {"start_bar": max(0, int(start_bar)), "end_bar": max(0, int(end_bar)), "label": label}
-        segment.update(profiles.get(label, profiles["main_a"]))
-        return segment
-
-    def _segment_for_bar(self, bar_idx: int, arrangement: list[dict[str, Any]]) -> dict[str, Any]:
-        for segment in arrangement:
-            if int(segment["start_bar"]) <= bar_idx < int(segment["end_bar"]):
-                return segment
-        return arrangement[-1] if arrangement else self._segment(0, 1, "main_a")
-
-    def _segment_for_time(self, t: float, bar: float, arrangement: list[dict[str, Any]]) -> dict[str, Any]:
-        return self._segment_for_bar(max(0, int(t // bar)), arrangement)
-
-    def _role_gain(self, segment: dict[str, Any], role: str) -> float:
-        return self._float_value(segment.get(role, 1.0), 1.0, 0.0, 1.5)
-
-    def _density_shift(self, segment: dict[str, Any]) -> float:
-        return self._float_value(segment.get("density", 0.0), 0.0, -0.5, 0.4)
-
-    def _is_fill_bar(self, bar_idx: int, arrangement: list[dict[str, Any]], diversity_level: int) -> bool:
-        if diversity_level <= 0 or bar_idx <= 0:
-            return False
-        segment = self._segment_for_bar(bar_idx, arrangement)
-        label = str(segment.get("label", "main_a"))
-        if label in {"intro", "outro"}:
-            return False
-        end_bar = int(segment.get("end_bar", 0))
-        start_bar = int(segment.get("start_bar", 0))
-        if end_bar - start_bar >= 4 and bar_idx + 1 == end_bar:
-            return True
-        phrase = 8 if diversity_level >= 2 else 12
-        return (bar_idx + 1) % phrase == 0
-
-    def _apply_arrangement_envelope(self, audio: np.ndarray, sample_rate: int, bar: float, arrangement: list[dict[str, Any]], loopable: bool) -> np.ndarray:
-        if not arrangement or len(audio) <= 8:
-            return audio
-        if loopable:
-            return audio
-        first = arrangement[0]
-        last = arrangement[-1]
-        fade_in = min(int(sample_rate * bar * max(1, int(first["end_bar"]) - int(first["start_bar"]))), len(audio) // 4)
-        fade_out = min(int(sample_rate * bar * max(1, int(last["end_bar"]) - int(last["start_bar"]))), len(audio) // 4)
-        if fade_in > 8:
-            audio[:fade_in] *= np.linspace(0.15, 1.0, fade_in, dtype=np.float32)
-        if fade_out > 8:
-            audio[-fade_out:] *= np.linspace(1.0, 0.05, fade_out, dtype=np.float32)
-        return audio
-
-    def _freq(self, midi: int) -> float:
-        return 440.0 * (2.0 ** ((midi - 69) / 12.0))
-
-    def _env(self, n: int, attack: float, release: float, sample_rate: int) -> np.ndarray:
-        env = np.ones(n, dtype=np.float32)
-        attack_n = min(n, max(1, int(attack * sample_rate)))
-        release_n = min(n, max(1, int(release * sample_rate)))
-        env[:attack_n] *= np.linspace(0.0, 1.0, attack_n, dtype=np.float32)
-        env[-release_n:] *= np.linspace(1.0, 0.0, release_n, dtype=np.float32)
-        return env
-
-    def _osc(self, freq: float, n: int, sample_rate: int, wave_shape: str, brightness: float) -> np.ndarray:
-        t = np.arange(n, dtype=np.float32) / sample_rate
-        phase = 2.0 * np.pi * freq * t
-        if wave_shape == "square":
-            return np.sign(np.sin(phase)).astype(np.float32)
-        if wave_shape == "pulse":
-            duty = 0.18 + 0.22 * brightness
-            return ((phase / (2.0 * np.pi)) % 1.0 < duty).astype(np.float32) * 2.0 - 1.0
-        if wave_shape == "saw":
-            return (2.0 * ((freq * t) % 1.0) - 1.0).astype(np.float32)
-        if wave_shape == "triangle":
-            return (2.0 * np.abs(2.0 * ((freq * t) % 1.0) - 1.0) - 1.0).astype(np.float32)
-        return np.sin(phase).astype(np.float32)
-
-    def _add_note(
+    def render(
         self,
-        audio: np.ndarray,
-        sample_rate: int,
-        start: float,
-        dur: float,
-        midi: int,
-        gain: float,
-        shape: str,
-        brightness: float,
-        attack: float | None = None,
-        release: float | None = None,
+        spec: MusicSpec,
+        plan: RenderPlan,
+        wav_path: Path,
+        sample_rate: int = DEFAULT_SAMPLE_RATE,
+        diversity_level: int = DEFAULT_DIVERSITY_LEVEL,
     ) -> None:
-        start_i = int(start * sample_rate)
-        n = int(dur * sample_rate)
-        if start_i >= len(audio) or n <= 0:
-            return
-        n = min(n, len(audio) - start_i)
-        freq = self._freq(midi)
-        tone = self._osc(freq, n, sample_rate, shape, brightness)
-        if shape in {"saw", "square", "pulse"}:
-            tone += 0.35 * self._osc(freq * 2.0, n, sample_rate, "sine", brightness)
-        attack_value = attack if attack is not None else (0.006 if shape in {"square", "pulse"} else 0.02)
-        release_value = release if release is not None else min(0.18, dur * 0.45)
-        env = self._env(n, attack_value, min(release_value, dur * 0.9), sample_rate)
-        audio[start_i : start_i + n] += tone * env * gain
+        sample_rate = _safe_int(sample_rate, DEFAULT_SAMPLE_RATE, 16000, 48000)
+        duration = _safe_int(spec.duration, DEFAULT_DURATION, 5, HARD_MAX_SECONDS)
+        n = int(duration * sample_rate)
+        music = np.zeros(n, dtype=np.float32)
+        drums = np.zeros(n, dtype=np.float32)
+        texture = np.zeros(n, dtype=np.float32)
+        composer = plan.composer or _default_plan(spec, diversity_level).composer
+        root = int(composer.get("root_midi", 60))
+        scale = [int(x) for x in composer.get("scale", MINOR_SCALE)] or MINOR_SCALE
+        profile = str(composer.get("style_profile", _profile_name_from_text(spec.mood)))
+        bpm = _safe_int(composer.get("bpm", spec.bpm), spec.bpm, 55, 180)
+        beat_sec = 60.0 / float(bpm)
+        bar_sec = beat_sec * 4.0
+        step_sec = bar_sec / 16.0
+        total_bars = max(1, int(math.ceil(duration / bar_sec)))
+        seed = int(composer.get("seed", _stable_seed(spec.mood)))
+        rng = np.random.default_rng(seed)
+        mix = composer.get("mix", {}) if isinstance(composer.get("mix"), dict) else {}
+        automation = composer.get("automation", {}) if isinstance(composer.get("automation"), dict) else {}
+        drum_gain = _safe_float(mix.get("drum_gain"), 0.72, 0.0, 1.5)
+        bass_gain = _safe_float(mix.get("bass_gain"), 0.55, 0.0, 1.5)
+        chord_gain = _safe_float(mix.get("chord_gain"), 0.42, 0.0, 1.5)
+        lead_gain = _safe_float(mix.get("lead_gain"), 0.38, 0.0, 1.5)
+        texture_gain = _safe_float(mix.get("texture_gain"), 0.12, 0.0, 1.0)
+        brightness = _safe_float(spec.brightness, 0.6, 0.0, 1.0)
+        energy = _safe_float(spec.energy, 0.55, 0.0, 1.0)
+        density = _safe_float(spec.density, 0.55, 0.0, 1.0)
+        swing = _safe_float(composer.get("drums", {}).get("swing", plan.drums.get("swing", 0.5)), 0.5, 0.45, 0.65)
+        motif_call = composer.get("motifs", {}).get("call", [])
+        motif_response = composer.get("motifs", {}).get("response", [])
+        motif_b = composer.get("motifs", {}).get("b_variation", [])
+        kick_times: list[float] = []
+
+        self._render_harmony(music, spec, plan, composer, root, scale, sample_rate, total_bars, step_sec, chord_gain, brightness, rng)
+        self._render_bass(music, spec, composer, root, scale, sample_rate, total_bars, step_sec, bass_gain, brightness, profile, rng)
+        self._render_melody(
+            music,
+            spec,
+            plan,
+            composer,
+            root,
+            scale,
+            sample_rate,
+            total_bars,
+            step_sec,
+            lead_gain,
+            brightness,
+            profile,
+            motif_call,
+            motif_response,
+            motif_b,
+            rng,
+        )
+        self._render_drums(drums, spec, composer, sample_rate, total_bars, step_sec, drum_gain, density, profile, swing, rng, kick_times)
+        self._render_texture(texture, spec, composer, sample_rate, duration, texture_gain, profile, rng)
+        if plan.effects.get("riser", True):
+            self._render_transitions(texture, composer, sample_rate, duration, step_sec, texture_gain, profile, rng)
+
+        if plan.effects.get("sidechain", True):
+            amount = _safe_float(automation.get("sidechain_amount"), 0.22, 0.0, 0.65)
+            duck = _sidechain_envelope(n, sample_rate, kick_times, amount, release_sec=0.30 * beat_sec)
+            music *= duck
+            texture *= np.maximum(duck, 0.82)
+
+        if plan.effects.get("delay", True):
+            music = _delay(music, sample_rate, bpm, wet=_safe_float(mix.get("delay_wet"), 0.14, 0.0, 0.45), feedback=0.33, dotted=profile in {"trance", "ambient", "synthwave"})
+        if plan.effects.get("reverb", True):
+            music = _reverb(music, sample_rate, wet=_safe_float(mix.get("reverb_wet"), 0.22, 0.0, 0.65))
+            texture = _reverb(texture, sample_rate, wet=min(0.50, _safe_float(mix.get("reverb_wet"), 0.22, 0.0, 0.65) + 0.12))
+        combined = music + drums + texture
+        if plan.effects.get("lowpass", False) or profile in {"lofi", "ambient"}:
+            window = 3 if profile != "lofi" else 5
+            combined = 0.74 * combined + 0.26 * _moving_average(combined, window)
+        combined = _soft_saturate(combined, _safe_float(mix.get("soft_saturation_drive"), 1.45, 0.5, 3.0))
+        # Avoid hard digital start/end clicks even when the music is not loopable.
+        fade = min(int(0.018 * sample_rate), n // 20)
+        if fade > 8:
+            ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+            combined[:fade] *= ramp
+            combined[-fade:] *= ramp[::-1]
+        if spec.loopable:
+            combined = _make_loopable(combined, sample_rate)
+        _write_wav(wav_path, combined, sample_rate, _safe_float(plan.master.get("target_peak"), 0.92, 0.3, 0.98))
+
+    def _render_harmony(
+        self,
+        target: np.ndarray,
+        spec: MusicSpec,
+        plan: RenderPlan,
+        composer: dict[str, Any],
+        root: int,
+        scale: list[int],
+        sr: int,
+        total_bars: int,
+        step_sec: float,
+        gain: float,
+        brightness: float,
+        rng: np.random.Generator,
+    ) -> None:
+        profile = str(composer.get("style_profile", "electronic"))
+        voicing = str(plan.chords.get("voicing", composer.get("chords", {}).get("voicing", "soft")))
+        synth = "pad" if voicing in {"drone", "open"} or profile in {"ambient", "synthwave"} else "warm_keys"
+        for bar in range(total_bars):
+            section = _section_for_bar(composer, bar)
+            role = str(section.get("role", "hook"))
+            energy_mul = _safe_float(section.get("energy"), 0.8, 0.1, 1.2)
+            chord = _chord_for_bar(composer, bar)
+            degrees = [int(x) for x in chord.get("scale_degrees", [0, 2, 4])]
+            if role == "break" and profile not in {"ambient", "lofi"}:
+                degrees = degrees[:2]
+            if profile == "ambient":
+                start = bar * 16 * step_sec
+                dur = 15.8 * step_sec
+                octave = -1 if bar % 2 == 0 else 0
+                for idx, degree in enumerate(degrees[:4]):
+                    midi = _degree_to_midi(root, scale, degree, octave + (1 if idx >= 2 else 0))
+                    _add_note(target, start + idx * 0.015, dur, midi, gain * 0.26 * energy_mul, sr, "pad", brightness, rng)
+            elif voicing == "stabs":
+                for step in (0, 6, 8, 14):
+                    if role == "intro" and step in {6, 14}:
+                        continue
+                    start = _step_time(bar, step, step_sec, swing=0.5)
+                    for idx, degree in enumerate(degrees[:3]):
+                        midi = _degree_to_midi(root, scale, degree, 0 + (1 if idx == 2 else 0))
+                        _add_note(target, start, 1.3 * step_sec, midi, gain * 0.18 * energy_mul, sr, "warm_keys", brightness, rng)
+            else:
+                for step in (0, 8):
+                    if role == "intro" and step == 8 and spec.duration > 20:
+                        continue
+                    start = _step_time(bar, step, step_sec, swing=0.5)
+                    dur = 6.0 * step_sec if voicing == "open" else 3.5 * step_sec
+                    for idx, degree in enumerate(degrees[:4]):
+                        midi = _degree_to_midi(root, scale, degree, -1 + (idx // 2))
+                        _add_note(target, start + idx * 0.01, dur, midi, gain * 0.17 * energy_mul, sr, synth, brightness, rng)
+
+    def _render_bass(
+        self,
+        target: np.ndarray,
+        spec: MusicSpec,
+        composer: dict[str, Any],
+        root: int,
+        scale: list[int],
+        sr: int,
+        total_bars: int,
+        step_sec: float,
+        gain: float,
+        brightness: float,
+        profile: str,
+        rng: np.random.Generator,
+    ) -> None:
+        pattern = composer.get("bass", {}).get("pattern", [])
+        tone = str(composer.get("bass", {}).get("tone", "warm"))
+        synth = "acid_bass" if tone == "acid" else "warm_bass" if tone == "warm" else "sub_bass"
+        for bar in range(total_bars):
+            section = _section_for_bar(composer, bar)
+            role = str(section.get("role", "hook"))
+            if role == "intro" and profile not in {"ambient", "lofi"} and bar % 2 == 1:
+                continue
+            if role == "break" and profile not in {"ambient", "lofi"}:
+                continue
+            chord = _chord_for_bar(composer, bar)
+            bass_degree = int(chord.get("bass_degree", 0))
+            energy_mul = _safe_float(section.get("energy"), 0.8, 0.1, 1.2)
+            for event in pattern:
+                step = int(event.get("step", 0))
+                degree = bass_degree
+                if int(event.get("degree", 0)) in {4, 5}:
+                    degree = int(chord.get("scale_degrees", [bass_degree, 2, 4])[min(2, len(chord.get("scale_degrees", [0, 2, 4])) - 1)])
+                elif int(event.get("degree", 0)) not in {0}:
+                    degree = (bass_degree + int(event.get("degree", 0))) % len(scale)
+                octave = int(event.get("octave", -2))
+                if role in {"drop", "return"} and profile in {"acid techno", "melodic techno", "trance"} and step in {10, 14}:
+                    octave += 1
+                start = _step_time(bar, step, step_sec, swing=0.5)
+                dur = max(0.08, float(event.get("length_steps", 2)) * step_sec * 0.92)
+                midi = _degree_to_midi(root, scale, degree, octave)
+                amp = gain * float(event.get("accent", 0.82)) * energy_mul
+                _add_note(target, start + 0.012, dur, midi, amp, sr, synth, brightness, rng)
+
+    def _render_melody(
+        self,
+        target: np.ndarray,
+        spec: MusicSpec,
+        plan: RenderPlan,
+        composer: dict[str, Any],
+        root: int,
+        scale: list[int],
+        sr: int,
+        total_bars: int,
+        step_sec: float,
+        gain: float,
+        brightness: float,
+        profile: str,
+        motif_call: list[dict[str, Any]],
+        motif_response: list[dict[str, Any]],
+        motif_b: list[dict[str, Any]],
+        rng: np.random.Generator,
+    ) -> None:
+        register = str(plan.melody.get("register", "mid"))
+        base_oct = 1 if register == "mid" else 2 if register == "high" else 0
+        synth = "chip_lead" if profile == "8bit" else "bell" if profile == "ambient" else "pluck" if profile in {"lofi", "breakbeat"} else "saw_lead"
+        for bar in range(total_bars):
+            section = _section_for_bar(composer, bar)
+            role = str(section.get("role", "hook"))
+            energy_mul = _safe_float(section.get("energy"), 0.8, 0.1, 1.2)
+            if role == "intro" and bar % 2 == 1 and profile not in {"8bit", "trance"}:
+                continue
+            if role == "break":
+                motif = motif_response[::2] if motif_response else motif_call[::2]
+            elif role in {"variation", "drop", "return"}:
+                motif = motif_b if motif_b else motif_call
+            elif bar % 2:
+                motif = motif_response if motif_response else motif_call
+            else:
+                motif = motif_call
+            chord = _chord_for_bar(composer, bar)
+            chord_degrees = [int(x) for x in chord.get("scale_degrees", [0, 2, 4])]
+            for event in motif:
+                step = int(event.get("step", 0))
+                degree = int(event.get("degree", 0))
+                if event.get("strong_chord_tone") or step % 8 in {0, 4}:
+                    degree = chord_degrees[(step // 4) % len(chord_degrees)]
+                octave = base_oct + int(event.get("octave", 0))
+                if role in {"drop", "return"} and profile not in {"ambient", "lofi"}:
+                    octave += 1 if step >= 8 else 0
+                start = _step_time(bar, step, step_sec, swing=0.5 if profile != "lofi" else 0.57)
+                length_steps = float(event.get("length_steps", 2))
+                dur = max(0.05, step_sec * length_steps * (0.86 if profile == "8bit" else 1.08))
+                midi = _degree_to_midi(root, scale, degree, octave)
+                amp = gain * float(event.get("velocity", 0.75)) * energy_mul
+                if role == "outro":
+                    amp *= 0.55
+                _add_note(target, start, dur, midi, amp, sr, synth, brightness, rng)
+            # Counter or pingpong arpeggio gives electronic identity without relying on the main hook only.
+            if profile in {"8bit", "trance", "synthwave"} or (profile in {"melodic techno", "acid techno"} and role in {"drop", "build", "return"}):
+                chord_degrees = [int(x) for x in chord.get("scale_degrees", [0, 2, 4])]
+                arp_steps = list(range(0, 16, 2)) if profile != "8bit" else list(range(0, 16, 1))
+                seq = chord_degrees + list(reversed(chord_degrees[1:-1] or chord_degrees))
+                for idx, step in enumerate(arp_steps):
+                    if role == "intro" and idx % 2:
+                        continue
+                    degree = seq[(idx + bar) % len(seq)]
+                    midi = _degree_to_midi(root, scale, degree, base_oct - 1 + (1 if idx % 4 == 3 else 0))
+                    _add_note(target, _step_time(bar, step, step_sec, swing=0.5), step_sec * 0.72, midi, gain * 0.22 * energy_mul, sr, "chip_lead" if profile == "8bit" else "pluck", brightness, rng)
 
     def _render_drums(
         self,
-        total_samples: int,
-        sample_rate: int,
-        beat: float,
+        target: np.ndarray,
         spec: MusicSpec,
-        plan: RenderPlan,
-        rng: random.Random,
-        arrangement: list[dict[str, Any]],
-        diversity_level: int,
-    ) -> np.ndarray:
-        audio = np.zeros(total_samples, dtype=np.float32)
-        drums = self._section(plan, "drums")
-        pattern = self._choice(drums.get("pattern"), self.DRUM_PATTERNS, self._default_drum_pattern(spec))
-        if pattern == "ambient_no_drums":
-            return audio
-
-        density = self._float_value(drums.get("density", spec.density), spec.density, 0.0, 1.0)
-        base_drum_gain = self._track_gain(plan, "drums", 1.0)
-        step_dur = beat / 4.0
-        bar = beat * 4.0
-        steps = int(math.ceil(total_samples / sample_rate / step_dur))
-        for step in range(steps):
-            pos = step % 16
-            t = step * step_dur
-            bar_idx = int(t // bar)
-            segment = self._segment_for_bar(bar_idx, arrangement)
-            effective_density = _clamp(density + self._density_shift(segment), 0.0, 1.0)
-            drum_gain = base_drum_gain * self._role_gain(segment, "drums")
-            if self._is_fill_bar(bar_idx, arrangement, diversity_level) and pos >= 12:
-                self._drum_fill(audio, sample_rate, t, pos, pattern, drum_gain, spec, rng)
-                continue
-            if pattern in {"lofi_swing", "breakbeat"} and pos % 4 in {1, 3}:
-                t += step_dur * (0.28 if pattern == "lofi_swing" else 0.14)
-
-            if pattern == "lofi_swing":
-                if pos in {0, 6, 10}:
-                    self._kick(audio, sample_rate, t, drum_gain * (0.44 + 0.18 * spec.energy))
-                if pos in {4, 12} and spec.energy > 0.18:
-                    self._snare(audio, sample_rate, t, drum_gain * (0.22 + 0.24 * effective_density), rng)
-                if pos in {0, 2, 4, 6, 8, 10, 12, 14} or effective_density > 0.72:
-                    self._hat(audio, sample_rate, t, drum_gain * (0.045 + 0.11 * spec.brightness), rng)
-                if effective_density > 0.62 and pos in {3, 11, 15}:
-                    self._hat(audio, sample_rate, t, drum_gain * 0.045, rng)
-            elif pattern == "8bit_arpeggio_beat":
-                if pos in {0, 8}:
-                    self._kick(audio, sample_rate, t, drum_gain * (0.48 + 0.22 * spec.energy))
-                if pos in {4, 12} and spec.energy > 0.22:
-                    self._snare(audio, sample_rate, t, drum_gain * (0.18 + 0.22 * effective_density), rng)
-                if pos % 2 == 0 or effective_density > 0.65:
-                    self._hat(audio, sample_rate, t, drum_gain * (0.05 + 0.08 * spec.brightness), rng)
-                if pos in {3, 7, 11, 15} and effective_density > 0.36:
-                    self._blip(audio, sample_rate, t, 1200.0 + 90.0 * (pos % 4), drum_gain * 0.04)
-            elif pattern == "breakbeat":
-                if pos in {0, 3, 10} or (spec.energy > 0.72 and pos == 14):
-                    self._kick(audio, sample_rate, t, drum_gain * (0.5 + 0.24 * spec.energy))
-                if pos in {4, 12}:
-                    self._snare(audio, sample_rate, t, drum_gain * (0.3 + 0.24 * effective_density), rng)
-                if effective_density > 0.56 and pos in {7, 15}:
-                    self._snare(audio, sample_rate, t, drum_gain * 0.12, rng)
-                if pos % 2 == 0 or (effective_density > 0.7 and pos in {1, 5, 9, 13}):
-                    self._hat(audio, sample_rate, t, drum_gain * (0.06 + 0.12 * spec.brightness), rng)
-            elif pattern == "minimal_techno":
-                if pos in {0, 4, 8, 12}:
-                    self._kick(audio, sample_rate, t, drum_gain * (0.54 + 0.24 * spec.energy))
-                if pos == 8 and spec.energy > 0.35:
-                    self._snare(audio, sample_rate, t, drum_gain * (0.18 + 0.18 * effective_density), rng)
-                if pos in {2, 6, 10, 14} or effective_density > 0.74:
-                    self._hat(audio, sample_rate, t, drum_gain * (0.055 + 0.12 * spec.brightness), rng)
-            else:
-                if pos in {0, 8} or (pattern == "four_on_floor" and pos in {4, 12}):
-                    self._kick(audio, sample_rate, t, drum_gain * (0.5 + 0.22 * spec.energy))
-                if pos in {4, 12} and spec.energy > 0.25:
-                    self._snare(audio, sample_rate, t, drum_gain * (0.24 + 0.22 * effective_density), rng)
-                if effective_density > 0.42 or pos % 4 == 0:
-                    self._hat(audio, sample_rate, t, drum_gain * (0.07 + 0.12 * spec.brightness), rng)
-        return audio
-
-    def _kick(self, audio: np.ndarray, sample_rate: int, start: float, gain: float) -> None:
-        n = int(0.18 * sample_rate)
-        start_i = int(start * sample_rate)
-        if start_i >= len(audio):
+        composer: dict[str, Any],
+        sr: int,
+        total_bars: int,
+        step_sec: float,
+        gain: float,
+        density: float,
+        profile: str,
+        swing: float,
+        rng: np.random.Generator,
+        kick_times: list[float],
+    ) -> None:
+        drums = composer.get("drums", {}) if isinstance(composer.get("drums"), dict) else {}
+        if plan_is_ambient_no_drums := (profile == "ambient" and spec.energy < 0.45):
+            # Ambient still gets very quiet pulse/noise ticks so it has motion without becoming a beat.
+            for bar in range(total_bars):
+                if bar % 2 == 0:
+                    t = _step_time(bar, 0, step_sec, swing=0.5)
+                    kick_times.append(t)
+                    _add_kick(target, t, sr, amp=gain * 0.13)
             return
-        n = min(n, len(audio) - start_i)
-        t = np.arange(n, dtype=np.float32) / sample_rate
-        freq = 42.0 + 58.0 * np.exp(-t * 32.0)
-        phase = 2.0 * np.pi * np.cumsum(freq) / sample_rate
-        env = np.exp(-t * 18.0).astype(np.float32)
-        audio[start_i : start_i + n] += np.sin(phase).astype(np.float32) * env * gain
-
-    def _snare(self, audio: np.ndarray, sample_rate: int, start: float, gain: float, rng: random.Random) -> None:
-        n = int(0.14 * sample_rate)
-        start_i = int(start * sample_rate)
-        if start_i >= len(audio):
-            return
-        n = min(n, len(audio) - start_i)
-        noise = self._noise(n, rng)
-        env = np.exp(-np.arange(n, dtype=np.float32) / sample_rate * 22.0)
-        body = self._osc(180.0, n, sample_rate, "triangle", 0.4) * 0.25
-        audio[start_i : start_i + n] += (noise * 0.75 + body) * env * gain
-
-    def _hat(self, audio: np.ndarray, sample_rate: int, start: float, gain: float, rng: random.Random) -> None:
-        n = int(0.055 * sample_rate)
-        start_i = int(start * sample_rate)
-        if start_i >= len(audio):
-            return
-        n = min(n, len(audio) - start_i)
-        noise = self._noise(n, rng)
-        env = np.exp(-np.arange(n, dtype=np.float32) / sample_rate * 75.0)
-        audio[start_i : start_i + n] += noise * env * gain
-
-    def _blip(self, audio: np.ndarray, sample_rate: int, start: float, freq: float, gain: float) -> None:
-        n = int(0.045 * sample_rate)
-        start_i = int(start * sample_rate)
-        if start_i >= len(audio):
-            return
-        n = min(n, len(audio) - start_i)
-        tone = self._osc(freq, n, sample_rate, "square", 0.8)
-        env = np.exp(-np.arange(n, dtype=np.float32) / sample_rate * 62.0)
-        audio[start_i : start_i + n] += tone * env * gain
-
-    def _drum_fill(self, audio: np.ndarray, sample_rate: int, start: float, pos: int, pattern: str, gain: float, spec: MusicSpec, rng: random.Random) -> None:
-        accent = 0.75 + 0.35 * spec.energy
-        if pattern == "8bit_arpeggio_beat":
-            self._blip(audio, sample_rate, start, 900.0 + 140.0 * (pos - 12), gain * 0.08 * accent)
-            if pos in {12, 15}:
-                self._hat(audio, sample_rate, start, gain * 0.08, rng)
-            return
-        if pos in {12, 14, 15}:
-            self._snare(audio, sample_rate, start, gain * (0.16 + 0.16 * spec.density) * accent, rng)
-        if pos in {13, 15}:
-            self._hat(audio, sample_rate, start, gain * (0.08 + 0.08 * spec.brightness), rng)
-        if pattern == "minimal_techno" and pos == 12:
-            self._kick(audio, sample_rate, start, gain * 0.42 * accent)
-
-    def _render_bass(self, total_samples: int, sample_rate: int, beat: float, root: int, scale: list[int], spec: MusicSpec, plan: RenderPlan, rng: random.Random, arrangement: list[dict[str, Any]]) -> np.ndarray:
-        audio = np.zeros(total_samples, dtype=np.float32)
-        bass = self._section(plan, "bass")
-        pattern = self._choice(bass.get("pattern"), self.BASS_PATTERNS, self._default_bass_pattern(spec))
-        engine = self._voice_engine("bass", spec, plan)
-        shape = str(engine["shape"])
-        brightness = _clamp(spec.brightness + float(engine["brightness"]), 0.0, 1.0)
-        gain = self._track_gain(plan, "bass", float(engine["gain"])) * (0.13 + 0.14 * spec.energy)
-        attack = float(engine["attack"])
-        release = float(engine["release"])
-        progression = self._chord_degrees(plan, spec)
-        duration_sec = total_samples / sample_rate
-        bar = beat * 4.0
-
-        if pattern == "sub_drone":
-            bars = int(math.ceil(duration_sec / bar))
-            for idx in range(bars):
-                start = idx * bar
-                segment = self._segment_for_time(start, bar, arrangement)
-                segment_gain = self._role_gain(segment, "bass")
-                degree = progression[idx % len(progression)]
-                midi = self._scale_degree_midi(root, scale, degree, -24)
-                self._add_note(audio, sample_rate, start, bar * 0.98, midi, gain * 0.95 * segment_gain, "sine", brightness, attack, release)
-                if spec.density > 0.44:
-                    fifth = self._scale_degree_midi(root, scale, degree + 4, -24)
-                    self._add_note(audio, sample_rate, start + bar * 0.5, bar * 0.46, fifth, gain * 0.35 * segment_gain, "sine", brightness, attack, release)
-            return audio
-
-        if pattern == "acid_bass":
-            phrase = [0, 0, 2, None, 3, 0, 5, None, 0, 2, 0, 6, 5, None, 3, 2]
-            step_dur = beat / 4.0
-            steps = int(math.ceil(duration_sec / step_dur))
-            for step in range(steps):
-                item = phrase[step % len(phrase)]
-                if item is None:
+        kick_steps = [int(x) for x in drums.get("kick_steps", [0, 4, 8, 12])]
+        snare_steps = [int(x) for x in drums.get("snare_steps", [4, 12])]
+        hat_steps = [int(x) for x in drums.get("hat_steps", [0, 3, 6, 9, 12, 15])]
+        open_hat_steps = [int(x) for x in drums.get("open_hat_steps", [6, 14])]
+        for bar in range(total_bars):
+            section = _section_for_bar(composer, bar)
+            role = str(section.get("role", "hook"))
+            energy_mul = _safe_float(section.get("energy"), 0.8, 0.1, 1.2)
+            phrase_end = (bar + 1) % int(composer.get("phrase_bars", 4) or 4) == 0
+            local_kicks = list(kick_steps)
+            if role == "intro" and profile not in {"lofi", "breakbeat"}:
+                local_kicks = [0, 8]
+            if role == "break":
+                local_kicks = [0] if profile not in {"breakbeat"} else [0, 7]
+            if phrase_end and role in {"build", "drop", "return"}:
+                local_kicks = sorted(set(local_kicks + [14, 15] if profile == "breakbeat" else local_kicks + [14]))
+            for step in local_kicks:
+                t = _step_time(bar, step, step_sec, swing=0.5)
+                kick_times.append(t)
+                _add_kick(target, t, sr, amp=gain * energy_mul)
+            for step in snare_steps:
+                if role == "intro" and step == snare_steps[-1] and spec.duration > 25:
                     continue
-                bar_idx = int((step * step_dur) // bar)
-                segment = self._segment_for_bar(bar_idx, arrangement)
-                segment_gain = self._role_gain(segment, "bass")
-                degree = progression[bar_idx % len(progression)] + int(item)
-                octave = -24 + (12 if step % 8 in {3, 6} else 0)
-                midi = self._scale_degree_midi(root, scale, degree, octave)
-                self._add_note(audio, sample_rate, step * step_dur, step_dur * 0.7, midi, gain * 0.85 * segment_gain, shape, brightness, attack, release)
-            return audio
-
-        if pattern == "syncopated_pulse":
-            phrase = [0, None, 0, 2, None, 4, 3, None, 0, 0, None, 5, 4, None, 2, None]
-            step_dur = beat / 4.0
-            steps = int(math.ceil(duration_sec / step_dur))
-            for step in range(steps):
-                item = phrase[step % len(phrase)]
-                if item is None:
+                t = _step_time(bar, step, step_sec, swing=swing)
+                if profile in {"house", "melodic techno", "acid techno", "trance"}:
+                    _add_clap(target, t, sr, rng, amp=gain * 0.72 * energy_mul)
+                else:
+                    _add_snare(target, t, sr, rng, amp=gain * energy_mul)
+            for step in hat_steps:
+                if role == "intro" and step % 4 not in {0, 2} and density < 0.65:
                     continue
-                bar_idx = int((step * step_dur) // bar)
-                segment = self._segment_for_bar(bar_idx, arrangement)
-                segment_gain = self._role_gain(segment, "bass")
-                degree = progression[bar_idx % len(progression)] + int(item)
-                midi = self._scale_degree_midi(root, scale, degree, -24)
-                self._add_note(audio, sample_rate, step * step_dur, step_dur * 0.72, midi, gain * segment_gain, shape, brightness, attack, release)
-            return audio
-
-        if pattern == "warm_roots":
-            step_dur = beat * 2.0
-            steps = int(math.ceil(duration_sec / step_dur))
-            for step in range(steps):
-                bar_idx = int((step * step_dur) // bar)
-                segment = self._segment_for_bar(bar_idx, arrangement)
-                segment_gain = self._role_gain(segment, "bass")
-                degree = progression[bar_idx % len(progression)]
-                if step % 2 == 1 and spec.density > 0.5:
-                    degree += 4
-                midi = self._scale_degree_midi(root, scale, degree, -24)
-                self._add_note(audio, sample_rate, step * step_dur, step_dur * 0.9, midi, gain * 0.9 * segment_gain, shape, brightness, attack, release)
-            return audio
-
-        phrase = [0, 0, 7, 0, 5, 0, 4, 7]
-        step_dur = beat if spec.energy < 0.6 else beat / 2.0
-        steps = int(math.ceil(duration_sec / step_dur))
-        for step in range(steps):
-            bar_idx = int((step * step_dur) // bar)
-            segment = self._segment_for_bar(bar_idx, arrangement)
-            segment_gain = self._role_gain(segment, "bass")
-            base_degree = progression[bar_idx % len(progression)]
-            degree = base_degree + phrase[step % len(phrase)]
-            midi = self._scale_degree_midi(root, scale, degree, -24)
-            self._add_note(audio, sample_rate, step * step_dur, step_dur * 0.82, midi, gain * segment_gain, shape, brightness, attack, release)
-        return audio
-
-    def _render_chords(self, total_samples: int, sample_rate: int, bar: float, root: int, scale: list[int], spec: MusicSpec, plan: RenderPlan, rng: random.Random, arrangement: list[dict[str, Any]]) -> np.ndarray:
-        audio = np.zeros(total_samples, dtype=np.float32)
-        chords = self._section(plan, "chords")
-        voicing = self._choice(chords.get("voicing"), {"soft", "open", "stabs", "drone"}, "soft" if spec.brightness < 0.55 else "open")
-        engine = self._voice_engine("chords", spec, plan)
-        shape = str(engine["shape"])
-        brightness = _clamp(spec.brightness + float(engine["brightness"]), 0.0, 1.0)
-        gain = self._track_gain(plan, "chords", float(engine["gain"])) * (0.04 + 0.065 * (1.0 - spec.energy))
-        attack = float(engine["attack"])
-        release = float(engine["release"])
-        progression = self._chord_degrees(plan, spec)
-        progression_name = self._progression_name(plan, spec)
-        beat = bar / 4.0
-        bars = int(math.ceil(total_samples / sample_rate / bar))
-
-        for idx in range(bars):
-            degree = progression[idx % len(progression)]
-            start = idx * bar
-            segment = self._segment_for_bar(idx, arrangement)
-            segment_gain = self._role_gain(segment, "chords")
-            if progression_name == "modal_drone" or voicing == "drone":
-                notes = [
-                    self._scale_degree_midi(root, scale, degree, -12),
-                    self._scale_degree_midi(root, scale, degree + 4, -12),
-                    self._scale_degree_midi(root, scale, degree, 0),
-                ]
-                dur = bar * 0.98
-                offsets = [0.0, 0.03, 0.06]
-            elif voicing == "open":
-                notes = [
-                    self._scale_degree_midi(root, scale, degree, -12),
-                    self._scale_degree_midi(root, scale, degree + 4, -12),
-                    self._scale_degree_midi(root, scale, degree + 2, 0),
-                    self._scale_degree_midi(root, scale, degree + 6, 0),
-                ]
-                dur = bar * 0.88
-                offsets = [0.0, 0.018, 0.036, 0.054]
-            else:
-                notes = [
-                    self._scale_degree_midi(root, scale, degree, -12),
-                    self._scale_degree_midi(root, scale, degree + 2, -12),
-                    self._scale_degree_midi(root, scale, degree + 4, -12),
-                ]
-                dur = beat * 0.72 if voicing == "stabs" else bar * 0.9
-                offsets = [0.0, 0.015, 0.03]
-
-            if voicing == "stabs":
-                for stab in (0.0, beat * 1.5, beat * 2.5):
-                    for offset, midi in zip(offsets, notes):
-                        self._add_note(audio, sample_rate, start + stab + offset, dur, midi, gain * 0.9 * segment_gain, shape, brightness, attack, release)
-            else:
-                for offset, midi in zip(offsets, notes):
-                    self._add_note(audio, sample_rate, start + offset, dur, midi, gain * segment_gain, shape, brightness, attack, release)
-        return audio
-
-    def _melody_phrase(self, shape_name: str, rng: random.Random) -> list[int | None]:
-        if shape_name == "arpeggio":
-            return [0, 2, 4, 7, 4, 2, 0, None, 2, 4, 5, 4, 2, None, 0, 2]
-        if shape_name == "call_response":
-            return [0, 2, 4, None, 2, 0, None, None, 4, 5, 4, 2, None, 1, 0, None]
-        if shape_name == "pentatonic":
-            return [0, None, 1, 2, None, 4, 2, None, 5, 4, None, 2, 1, None, 0, None]
-        if shape_name == "stepwise":
-            return [0, None, 1, None, 2, None, 1, None, 0, None, -1, None, 0, None, 1, None]
-        if shape_name == "random_walk":
-            position = rng.choice([0, 1, 2, 4])
-            phrase: list[int | None] = []
-            for idx in range(32):
-                if idx % 4 == 3 and rng.random() < 0.55:
-                    phrase.append(None)
+                if role == "break" and step % 4 != 0:
                     continue
-                position = max(-1, min(6, position + rng.choice([-1, 0, 1])))
-                phrase.append(position)
-            return phrase
-        return [0, 2, 4, 2, None, 5, 4, 2, 1, None, 2, 4, 6, 5, 4, None]
+                t = _step_time(bar, step, step_sec, swing=swing)
+                accent = 1.25 if step in open_hat_steps else 0.86
+                _add_hat(target, t, sr, rng, amp=gain * accent * (0.75 + 0.35 * density) * energy_mul, open_hat=False)
+            for step in open_hat_steps:
+                if role in {"intro", "break"} and profile not in {"breakbeat", "lofi"}:
+                    continue
+                t = _step_time(bar, step, step_sec, swing=swing)
+                _add_hat(target, t, sr, rng, amp=gain * 0.85 * energy_mul, open_hat=True)
+            if phrase_end:
+                fill_steps = [13, 14, 15] if profile in {"breakbeat", "8bit"} else [14, 15]
+                for idx, step in enumerate(fill_steps):
+                    t = _step_time(bar, step, step_sec, swing=swing)
+                    _add_snare(target, t, sr, rng, amp=gain * (0.28 + idx * 0.08) * energy_mul)
+                    _add_hat(target, t + 0.018, sr, rng, amp=gain * 0.60 * energy_mul, open_hat=False)
 
-    def _render_melody(self, total_samples: int, sample_rate: int, beat: float, root: int, scale: list[int], spec: MusicSpec, plan: RenderPlan, rng: random.Random, arrangement: list[dict[str, Any]]) -> np.ndarray:
-        audio = np.zeros(total_samples, dtype=np.float32)
-        melody = self._section(plan, "melody")
-        shape_name = self._choice(melody.get("shape"), self.MELODY_SHAPES, self._default_melody_shape(spec))
-        if shape_name == "periodic":
-            shape_name = "motif_variation"
-        activity = self._float_value(melody.get("activity", spec.density), spec.density, 0.0, 1.0)
-        register = self._choice(melody.get("register"), {"low", "mid", "high"}, "high" if spec.brightness > 0.65 else "mid")
-        register_octave = {"low": -12, "mid": 0, "high": 12}[register]
-        if "ambient" in spec.mood.lower():
-            register_octave += 12
-        engine = self._voice_engine("melody", spec, plan)
-        shape = str(engine["shape"])
-        brightness = _clamp(spec.brightness + float(engine["brightness"]), 0.0, 1.0)
-        gain = self._track_gain(plan, "melody", float(engine["gain"])) * (0.055 + 0.095 * spec.energy)
-        attack = float(engine["attack"])
-        release = float(engine["release"])
-        progression = self._chord_degrees(plan, spec)
-        phrase = self._melody_phrase(shape_name, rng)
-        step_dur = beat / 4.0 if shape_name == "arpeggio" else beat / 2.0
-        duration_sec = total_samples / sample_rate
-        bar = beat * 4.0
-        steps = int(math.ceil(duration_sec / step_dur))
+    def _render_texture(
+        self,
+        target: np.ndarray,
+        spec: MusicSpec,
+        composer: dict[str, Any],
+        sr: int,
+        duration: int,
+        gain: float,
+        profile: str,
+        rng: np.random.Generator,
+    ) -> None:
+        n = len(target)
+        if gain <= 0 or n == 0:
+            return
+        noise = rng.standard_normal(n).astype(np.float32)
+        if profile in {"lofi", "synthwave"}:
+            noise = _moving_average(noise, 72)
+            wobble = 0.70 + 0.30 * np.sin(2 * np.pi * np.arange(n, dtype=np.float32) / float(sr) * 0.23 + 1.4)
+            target += noise * wobble.astype(np.float32) * gain * 0.16
+            # Vinyl-like sparse crackles.
+            crackle_count = min(160, max(4, duration * 3))
+            positions = rng.integers(0, n, size=crackle_count)
+            for pos in positions:
+                length = min(n - int(pos), int(0.006 * sr))
+                if length > 0:
+                    target[int(pos) : int(pos) + length] += rng.standard_normal(length).astype(np.float32) * np.exp(-np.linspace(0, 8, length)).astype(np.float32) * gain * 0.08
+        elif profile in {"ambient", "ambient techno"}:
+            slow = _moving_average(noise, max(32, int(0.018 * sr)))
+            movement = 0.45 + 0.55 * np.sin(2 * np.pi * np.arange(n, dtype=np.float32) / float(sr) * 0.035 + 0.8)
+            target += slow * movement.astype(np.float32) * gain * 0.32
+        else:
+            target += _moving_average(noise, 24) * gain * 0.06
 
-        for step in range(steps):
-            phrase_item = phrase[step % len(phrase)]
-            if phrase_item is None:
+    def _render_transitions(
+        self,
+        target: np.ndarray,
+        composer: dict[str, Any],
+        sr: int,
+        duration: int,
+        step_sec: float,
+        gain: float,
+        profile: str,
+        rng: np.random.Generator,
+    ) -> None:
+        if profile == "ambient":
+            return
+        sections = composer.get("sections") or []
+        for section in sections:
+            role = str(section.get("role", ""))
+            if role not in {"drop", "return"}:
                 continue
-            phrase_pos = step % len(phrase)
-            bar_idx = int((step * step_dur) // bar)
-            segment = self._segment_for_bar(bar_idx, arrangement)
-            effective_activity = _clamp(activity + self._density_shift(segment), 0.0, 1.0)
-            if effective_activity < 0.42 and phrase_pos not in {0, 4, 8, 12}:
+            start_bar = int(section.get("start_bar", 0))
+            start_sec = start_bar * 16 * step_sec
+            riser_len = min(2.0, max(0.6, 12 * step_sec))
+            riser_start = max(0.0, start_sec - riser_len)
+            length = int(riser_len * sr)
+            if length <= 0:
                 continue
-            if effective_activity < 0.62 and phrase_pos % 2 == 1:
-                continue
-            chord_degree = progression[bar_idx % len(progression)]
-            if shape_name in {"arpeggio", "call_response"}:
-                degree = chord_degree + int(phrase_item)
-            elif shape_name == "motif_variation" and (bar_idx % 2 == 1):
-                degree = int(phrase_item) + 1
-            else:
-                degree = int(phrase_item)
-            degree += int(segment.get("melody_shift", 0))
-            midi = self._scale_degree_midi(root, scale, degree, register_octave)
-            dur = step_dur * (0.58 if shape in {"square", "pulse", "saw"} else 0.82)
-            if shape_name == "stepwise":
-                dur = step_dur * 1.35
-            self._add_note(audio, sample_rate, step * step_dur, dur, midi, gain * self._role_gain(segment, "melody"), shape, brightness, attack, release)
-        return audio
+            t = np.linspace(0.0, 1.0, length, dtype=np.float32)
+            noise = rng.standard_normal(length).astype(np.float32)
+            sweep = _moving_average(noise, max(3, int((1.0 - t.mean() * 0.6) * 16)))
+            sweep *= (t ** 1.8).astype(np.float32)
+            _clip_add(target, int(riser_start * sr), sweep, gain * 0.35)
+            down_len = int(min(1.2, max(0.35, 8 * step_sec)) * sr)
+            if down_len > 0:
+                tt = np.linspace(0.0, 1.0, down_len, dtype=np.float32)
+                down = rng.standard_normal(down_len).astype(np.float32)
+                down = _moving_average(down, 28) * np.exp(-tt * 5.0).astype(np.float32)
+                _clip_add(target, int(start_sec * sr), down, gain * 0.28)
 
-    def _render_texture(self, total_samples: int, sample_rate: int, spec: MusicSpec, plan: RenderPlan, rng: random.Random) -> np.ndarray:
-        audio = np.zeros(total_samples, dtype=np.float32)
-        texture = self._section(plan, "texture")
-        noise_mode = str(texture.get("noise", "") or "").lower()
-        style_text = self._style_text(spec)
-        texture_gain = self._track_gain(plan, "texture", 1.0)
-        if not noise_mode:
-            noise_mode = "vinyl" if "lofi" in style_text else ("space" if "ambient" in style_text else "air")
-        if noise_mode == "none":
-            return audio
 
-        if noise_mode in {"vinyl", "tape"} or "vinyl_noise" in style_text:
-            noise = self._noise(total_samples, rng)
-            amount = 0.055 if noise_mode == "tape" else 0.08
-            audio += self._one_pole_lowpass(noise, amount) * (0.018 if noise_mode == "tape" else 0.024) * texture_gain
-            t = np.arange(total_samples, dtype=np.float32) / sample_rate
-            wobble = np.sin(2.0 * np.pi * 0.21 * t).astype(np.float32)
-            audio += wobble * 0.004 * texture_gain
-        elif noise_mode in {"air", "space"} or "noise_texture" in style_text:
-            t = np.arange(total_samples, dtype=np.float32) / sample_rate
-            slow = (np.sin(2.0 * np.pi * 0.07 * t) * 0.5 + 0.5).astype(np.float32)
-            audio += slow * (0.012 if noise_mode == "air" else 0.018) * texture_gain
-            if noise_mode == "space":
-                shimmer = np.sin(2.0 * np.pi * 880.0 * t + np.sin(2.0 * np.pi * 0.09 * t)).astype(np.float32)
-                audio += shimmer * slow * 0.006 * texture_gain
-        return audio
-
-    def _apply_effects(self, audio: np.ndarray, sample_rate: int, spec: MusicSpec, plan: RenderPlan) -> np.ndarray:
-        effects = self._section(plan, "effects")
-        if effects.get("lowpass") or "lowpass" in spec.effects or spec.brightness < 0.5:
-            audio = self._one_pole_lowpass(audio, 0.08 + spec.brightness * 0.18)
-        if effects.get("delay") or "small_delay" in spec.effects or "gentle_delay" in spec.effects:
-            delay = int((0.18 if spec.energy > 0.55 else 0.28) * sample_rate)
-            feedback = 0.26 if spec.loopable else 0.18
-            delayed = np.zeros_like(audio)
-            if delay < len(audio):
-                delayed[delay:] = audio[:-delay] * feedback
-                if spec.loopable:
-                    delayed[:delay] += audio[-delay:] * feedback * 0.65
-            audio = audio + delayed
-        if effects.get("reverb") or "wide_reverb" in spec.effects:
-            taps = [int(sample_rate * x) for x in (0.031, 0.047, 0.071, 0.113)]
-            wet = np.zeros_like(audio)
-            for idx, tap in enumerate(taps):
-                gain = 0.1 / (idx + 1)
-                if tap < len(audio):
-                    wet[tap:] += audio[:-tap] * gain
-                    if spec.loopable:
-                        wet[:tap] += audio[-tap:] * gain * 0.75
-            audio = audio + wet
-        return audio
-
-    def _one_pole_lowpass(self, audio: np.ndarray, amount: float) -> np.ndarray:
-        amount = _clamp(amount, 0.01, 0.95)
-        out = np.empty_like(audio)
-        last = 0.0
-        for idx, sample in enumerate(audio):
-            last += amount * (float(sample) - last)
-            out[idx] = last
-        return out
-
-    def _make_loopable(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:
-        n = len(audio)
-        if n <= 8:
-            return audio
-        candidates = []
-        for fade_sec in (0.25, 0.45, 0.7, 1.0):
-            fade = min(int(fade_sec * sample_rate), n // 6)
-            if fade <= 4:
-                continue
-            candidate = self._crossfade_loop(audio.copy(), fade, sample_rate)
-            candidates.append((self._loop_boundary_score(candidate, sample_rate), candidate))
-        if not candidates:
-            return audio
-        candidates.sort(key=lambda item: item[0])
-        return candidates[0][1]
-
-    def _crossfade_loop(self, audio: np.ndarray, fade: int, sample_rate: int) -> np.ndarray:
-        head = audio[:fade].copy()
-        tail = audio[-fade:].copy()
-        curve = np.linspace(0.0, 1.0, fade, dtype=np.float32)
-        curve = curve * curve * (3.0 - 2.0 * curve)
-        blend = tail * (1.0 - curve) + head * curve
-        audio[:fade] = blend
-        audio[-fade:] = blend
-        micro = min(int(0.03 * sample_rate), len(audio) // 16)
-        if micro > 4:
-            curve_in = np.linspace(0.0, 1.0, micro, dtype=np.float32)
-            curve_out = np.linspace(1.0, 0.0, micro, dtype=np.float32)
-            audio[:micro] *= curve_in * curve_in
-            audio[-micro:] *= curve_out * curve_out
-        return audio
-
-    def _loop_boundary_score(self, audio: np.ndarray, sample_rate: int) -> float:
-        window = min(int(0.08 * sample_rate), len(audio) // 10)
-        if window <= 4:
-            return 0.0
-        head = audio[:window]
-        tail = audio[-window:]
-        diff = float(np.sqrt(np.mean((head - tail) ** 2)))
-        level = float(np.sqrt(np.mean(head**2) + np.mean(tail**2))) + 1e-6
-        endpoint = abs(float(audio[0]) - float(audio[-1]))
-        return diff / level + endpoint
-
-    def _master(self, audio: np.ndarray, plan: RenderPlan) -> np.ndarray:
-        audio = np.tanh(audio * 1.15).astype(np.float32)
-        peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
-        target = float(plan.master.get("target_peak", 0.92)) if isinstance(plan.master, dict) else 0.92
-        target = _clamp(target, 0.3, 0.98)
-        if peak > 0.0001:
-            audio = audio / peak * target
-        return audio.astype(np.float32)
-
-    def _write_wav(self, path: Path, audio: np.ndarray, sample_rate: int) -> None:
-        pcm = np.clip(audio, -1.0, 1.0)
-        pcm16 = (pcm * 32767.0).astype(np.int16)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with wave.open(str(path), "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(sample_rate)
-            wf.writeframes(pcm16.tobytes())
+def _event_plain_result(event: AstrMessageEvent, text: str) -> Any:
+    try:
+        return event.chain_result([Plain(text)])
+    except Exception:
+        return event.plain_result(text)
 
 
 @register(
     "astrbot_plugin_pymusic",
     "Lenovo",
-    "Generate pure Python WAV music from prompts and send it to QQ chats.",
-    "0.3.0",
+    "Generate structured pure-Python WAV electronic music from prompts and send it to QQ chats.",
+    "v0.4.0",
     repo="https://github.com/blueraina/astrbot_plugin_pymusic",
 )
 class PyMusicPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None) -> None:
         super().__init__(context)
         self.config = config
+        self.context = context
         self.data_dir = _get_data_dir()
         self.renderer = PythonMusicRenderer()
-        self.render_sem = asyncio.Semaphore(1)
         self.rate_limiter = RateLimiter(cooldown_sec=30)
-
-    @filter.command("pymusic")
-    async def pymusic(self, event: AstrMessageEvent) -> Any:
-        async for result in self._handle_command(event):
-            yield result
+        self.render_sem = asyncio.Semaphore(1)
 
     @filter.llm_tool(name="generate_python_music")
-    async def generate_python_music(self, event: AstrMessageEvent, prompt: str, duration: int = 20, loopable: bool = False, send_mode: str = "auto") -> str:
-        """Generate and send a pure Python WAV music clip. Use this tool only when the user explicitly asks to generate music, send music, make a music clip, or express something with music.
+    async def generate_python_music(
+        self,
+        event: AstrMessageEvent,
+        prompt: str,
+        duration: float = DEFAULT_DURATION,
+        loopable: bool = False,
+        send_mode: str = "auto",
+    ) -> str:
+        """Generate and send a pure Python WAV music clip.
+
+        Use this tool only when the user explicitly asks to generate music, send music, make a music clip, or express something with music.
 
         Args:
-            prompt(string): Music prompt, such as electronic night city, 8bit battle, ambient stars, or lofi rainy cafe.
+            prompt(string): Music prompt, such as melodic techno winter city, 8bit battle, ambient stars, synthwave neon road, or lofi rainy cafe.
             duration(number): Requested duration in seconds.
             loopable(boolean): Whether the result should be loopable.
             send_mode(string): voice, file, or auto.
         """
         if not self._is_supported_platform(event):
             return "pymusic only supports QQ personal-account adapters and QQ official adapters."
-
         max_duration = self._max_duration()
-        duration = _safe_int(duration, self._default_duration(), 5, max_duration)
+        duration_int = _safe_int(duration, self._default_duration(), 5, max_duration)
         send_mode = _normalize_send_mode(send_mode, self._default_send_mode())
-        prompt = f"{prompt}\nRequested duration: {duration}s. Loopable: {loopable}. Send mode: {send_mode}."
-
+        prompt = f"{prompt}\nRequested duration: {duration_int}s. Loopable: {loopable}. Send mode: {send_mode}."
         async with self.render_sem:
             try:
-                brief, spec, plan, wav_path = await self._generate(prompt, event, duration, loopable, send_mode)
+                brief, spec, plan, wav_path = await self._generate(prompt, event, duration_int, loopable, send_mode)
             except Exception as exc:
                 logger.exception("[pymusic] generation failed")
                 return f"pymusic failed to generate music: {exc}"
-
         try:
             sent_mode = await self._send_music(event, wav_path, spec)
         except Exception as exc:
             logger.exception("[pymusic] send failed")
             return f"Generated a {spec.duration}s {spec.mood} WAV music clip, but sending failed: {exc}"
         self._cleanup_history()
-        return f"Generated a {spec.duration}s {spec.mood} WAV music clip and sent it as {sent_mode}. Enriched prompt: {brief.enriched_prompt}"
+        return (
+            f"Generated a {spec.duration}s {spec.mood} WAV music clip and sent it as {sent_mode}. "
+            f"Enriched prompt: {brief.enriched_prompt[:220]}"
+        )
 
-    async def _handle_command(self, event: AstrMessageEvent) -> Any:
+    @filter.command("pymusic")
+    async def pymusic(self, event: AstrMessageEvent) -> Any:
         if not self._is_supported_platform(event):
-            yield event.chain_result([Plain("pymusic 目前只支持 QQ 个人号适配器和 QQ 官方机器人。")])
+            yield _event_plain_result(event, "pymusic 目前只支持 QQ 个人号适配器和 QQ 官方机器人。")
             return
-
         payload = self._message_text(event).strip()
         requested_duration, prompt = _parse_command_payload(payload)
         if requested_duration is None or not prompt:
-            yield event.chain_result([Plain("用法：/pymusic 时间(秒) 提示词\n例如：/pymusic 20 8bit 夜晚城市 可循环")])
+            yield _event_plain_result(event, "用法：/pymusic 时间(秒) 提示词\n例如：/pymusic 30 寒冬 melodic techno 可循环")
             return
-
         cooldown_key = self._cooldown_key(event)
         wait = self.rate_limiter.check(cooldown_key)
         if wait > 0:
-            yield event.chain_result([Plain(f"pymusic 冷却中，请 {wait} 秒后再试。")])
+            yield _event_plain_result(event, f"pymusic 冷却中，请 {wait} 秒后再试。")
             return
-
-        yield event.chain_result([Plain("正在用纯 Python 合成音乐，请稍等。")])
-
+        yield _event_plain_result(event, "正在用纯 Python 合成音乐：先规划主题/段落/鼓贝斯配合，再渲染 WAV。")
         overrides = _prompt_overrides(prompt)
         duration = _safe_int(requested_duration, self._default_duration(), 5, self._max_duration())
         loopable = self._waveform_loopable() if overrides["loopable"] is None else bool(overrides["loopable"])
         send_mode = _normalize_send_mode(overrides["send_mode"], self._default_send_mode())
-
         async with self.render_sem:
             try:
                 brief, spec, plan, wav_path = await self._generate(prompt, event, duration, loopable, send_mode)
             except Exception as exc:
                 logger.exception("[pymusic] generation failed")
-                yield event.chain_result([Plain(f"生成失败：{exc}")])
+                yield _event_plain_result(event, f"生成失败：{exc}")
                 return
-
         try:
             sent_mode = await self._send_music(event, wav_path, spec)
         except Exception as exc:
             logger.exception("[pymusic] send failed")
-            yield event.chain_result([Plain(f"音乐已生成，但发送失败：{wav_path}\n{exc}")])
+            yield _event_plain_result(event, f"音乐已生成，但发送失败：{wav_path}\n{exc}")
             return
-
-        yield event.chain_result([Plain(f"pymusic 已生成：{spec.mood} / {spec.duration}s / {sent_mode}\n理解为：{brief.enriched_prompt[:180]}")])
+        section_names = ", ".join(str(s.get("id")) for s in plan.composer.get("sections", [])[:5])
+        yield _event_plain_result(
+            event,
+            f"pymusic 已生成：{spec.mood} / {spec.duration}s / {sent_mode}\n"
+            f"段落：{section_names}\n"
+            f"理解为：{brief.enriched_prompt[:180]}",
+        )
         self._cleanup_history()
 
-    async def _generate(self, prompt: str, event: AstrMessageEvent, duration: int, loopable: bool, send_mode: str) -> tuple[PromptBrief, MusicSpec, RenderPlan, Path]:
+    async def _generate(
+        self,
+        prompt: str,
+        event: AstrMessageEvent,
+        duration: int,
+        loopable: bool,
+        send_mode: str,
+    ) -> tuple[PromptBrief, MusicSpec, RenderPlan, Path]:
         brief = await self._build_prompt_brief(prompt, event, duration, loopable, send_mode)
         spec = await self._build_spec(brief, event, duration, loopable, send_mode)
         if spec.duration > VOICE_MAX_SECONDS and spec.send_mode in {"voice", "auto"}:
             spec.send_mode = "file"
-        plan = _default_plan(spec, self._diversity_level())
+        technique_guides = _select_technique_guides(brief, spec, self._diversity_level())
+        composer = _compose_arrangement(brief, spec, technique_guides, self._diversity_level())
+        plan = _default_plan(spec, self._diversity_level(), composer)
         wav_path = self.data_dir / f"pymusic_{int(time.time())}_{random.randint(1000, 9999)}.wav"
         sample_rate = self._sample_rate()
-        ai_code = await self._build_python_renderer_code(brief, event, spec)
+        ai_code = await self._build_python_renderer_code(brief, event, spec, technique_guides, composer)
         if ai_code:
             try:
                 await asyncio.to_thread(self._run_ai_python_renderer, ai_code, wav_path, spec.duration, sample_rate, spec.loopable)
             except Exception as exc:
                 logger.warning(f"[pymusic] AI Python renderer failed, using fixed renderer fallback: {exc}")
         if not wav_path.exists() or wav_path.stat().st_size <= 44:
-            plan = await self._build_plan(brief, event, spec)
+            plan = await self._build_plan(brief, event, spec, composer)
             await asyncio.to_thread(self.renderer.render, spec, plan, wav_path, sample_rate, self._diversity_level())
         if not wav_path.exists() or wav_path.stat().st_size <= 44:
             raise RuntimeError("WAV 文件没有成功生成")
         return brief, spec, plan, wav_path
 
-    async def _build_prompt_brief(self, prompt: str, event: AstrMessageEvent, duration: int, loopable: bool, send_mode: str) -> PromptBrief:
+    async def _build_prompt_brief(
+        self,
+        prompt: str,
+        event: AstrMessageEvent,
+        duration: int,
+        loopable: bool,
+        send_mode: str,
+    ) -> PromptBrief:
         fallback = _fallback_brief(prompt)
         provider = self._get_music_provider(event)
         if provider is None:
@@ -1938,14 +2483,14 @@ class PyMusicPlugin(Star):
         system_prompt = (
             "You are a music prompt producer for a deterministic pure-Python synthesizer. "
             "Rewrite short or vague user input into one professional, concrete music brief that a code-writing synthesizer can implement. "
-            "Do not include markdown. Do not write Python. Return one strict JSON object. "
-            "Fields: enriched_prompt string, style string, scene string, musical_intent string, "
-            "references array of short strings, avoid array of short strings. "
-            "The enriched_prompt should describe mood, genre, tempo feel, instruments, rhythm, harmony, melody, texture, effects, mix, and arrangement arc. "
+            "Return one strict JSON object only. Do not include markdown. Do not write Python. "
+            "Fields: enriched_prompt string, style string, scene string, musical_intent string, references array of short strings, avoid array of short strings. "
+            "The enriched_prompt must describe mood, genre, tempo feel, instruments, drum groove, bassline role, harmony, melody identity, call-response, texture, effects, mix, and arrangement arc. "
             "Infer concrete musical intent for sparse prompts instead of repeating the user's words. "
-            "Use references for 3-6 recommended technique ids from the provided catalog, preferably mixing structure, composition, synthesis, effect, and style categories. "
-            "These technique ids are composition grammar, not fixed songs or fixed code. "
-            "Use only electronic, 8bit, ambient, lofi, or nearby pure-synth styles. Avoid vocals, lyrics, external samples, and copyrighted artist imitation."
+            "Use references for 5-9 recommended technique ids from the provided catalog, mixing structure, composition, synthesis, effect, and style categories. "
+            "Prefer mature electronic arrangement concepts: theme/answer phrase, chord-tone targeting, kick-bass lock, fills, sidechain, riser/downlifter, filter sweep, delay throw, soft saturation. "
+            "Use only electronic, chiptune/8bit, ambient, lofi, techno, synthwave, trance, house, breakbeat, or nearby pure-synth styles. "
+            "Avoid vocals, lyrics, external samples, and copyrighted artist imitation."
         )
         user_prompt = (
             f"Original user prompt: {prompt}\n"
@@ -1959,12 +2504,23 @@ class PyMusicPlugin(Star):
             response = await self._provider_text_chat(provider, user_prompt, system_prompt)
             data = _extract_json(getattr(response, "completion_text", "") or str(response))
             if data:
-                return _brief_from_dict(data, prompt, fallback)
+                brief = _brief_from_dict(data, prompt, fallback)
+                # Always keep core local composition IDs even when the model returns a terse plan.
+                core = ["arrangement_motifs", "call_response_theme", "chord_tone_targeting", "bass_kick_lock"]
+                brief.references = list(dict.fromkeys(core + brief.references))[:12]
+                return brief
         except Exception as exc:
             logger.warning(f"[pymusic] prompt enrichment failed, using fallback: {exc}")
         return fallback
 
-    async def _build_spec(self, brief: PromptBrief, event: AstrMessageEvent, duration: int, loopable: bool, send_mode: str) -> MusicSpec:
+    async def _build_spec(
+        self,
+        brief: PromptBrief,
+        event: AstrMessageEvent,
+        duration: int,
+        loopable: bool,
+        send_mode: str,
+    ) -> MusicSpec:
         fallback = _fallback_spec(f"{brief.original_prompt}\n{brief.enriched_prompt}", duration, self._max_duration(), send_mode, loopable)
         provider = self._get_music_provider(event)
         if provider is None:
@@ -1972,23 +2528,18 @@ class PyMusicPlugin(Star):
         system_prompt = (
             "You convert an enriched music brief into one strict JSON object named MusicSpec. "
             "Do not include markdown. Do not write Python. "
-            "Allowed styles are electronic, 8bit, ambient, and lofi. "
-            "Fields: mood string, energy number 0..1, brightness number 0..1, density number 0..1, "
-            "bpm integer 55..180, key string, instruments array of strings, effects array of strings, "
-            "duration integer seconds, loopable boolean, send_mode string voice/file/auto. "
-            "Use the technique ids as stylistic hints for instruments/effects, but do not output fixed code or a fixed melody. "
-            "If references contain algorithmic composition or synthesis ids, reflect them in instruments/effects when possible."
+            "Allowed moods/styles include electronic, 8bit, ambient, lofi, melodic techno, synthwave, trance, house, breakbeat, ambient techno, and acid techno. "
+            "Fields: mood string, energy number 0..1, brightness number 0..1, density number 0..1, bpm integer 55..180, key string, "
+            "instruments array of strings, effects array of strings, duration integer seconds, loopable boolean, send_mode string voice/file/auto. "
+            "Choose values that make arrangement and production specific: drums, bass, chords/pad, lead/melody, texture, sidechain, filter, delay/reverb, transition FX. "
+            "Use technique ids as stylistic hints; do not output fixed code or a fixed melody."
         )
         user_prompt = (
             f"Original prompt: {brief.original_prompt}\n"
             f"Enriched prompt: {brief.enriched_prompt}\n"
-            f"Style: {brief.style}\n"
-            f"Scene: {brief.scene}\n"
-            f"Musical intent: {brief.musical_intent}\n"
-            f"Technique references: {brief.references}\n"
-            f"Avoid: {brief.avoid}\n"
-            f"Defaults: duration={duration}, loopable={loopable}, send_mode={send_mode}. "
-            f"Max duration={self._max_duration()}."
+            f"Style: {brief.style}\nScene: {brief.scene}\nMusical intent: {brief.musical_intent}\n"
+            f"Technique references: {brief.references}\nAvoid: {brief.avoid}\n"
+            f"Defaults: duration={duration}, loopable={loopable}, send_mode={send_mode}. Max duration={self._max_duration()}."
         )
         try:
             response = await self._provider_text_chat(provider, user_prompt, system_prompt)
@@ -1999,26 +2550,34 @@ class PyMusicPlugin(Star):
             logger.warning(f"[pymusic] MusicSpec LLM planning failed, using fallback: {exc}")
         return fallback
 
-    async def _build_python_renderer_code(self, brief: PromptBrief, event: AstrMessageEvent, spec: MusicSpec) -> str | None:
+    async def _build_python_renderer_code(
+        self,
+        brief: PromptBrief,
+        event: AstrMessageEvent,
+        spec: MusicSpec,
+        technique_guides: list[dict[str, Any]],
+        composer: CompositionPlan | dict[str, Any],
+    ) -> str | None:
         provider = self._get_music_provider(event)
         if provider is None:
             return None
-        technique_guides = _select_technique_guides(brief, spec, self._diversity_level())
+        composer_data = _composer_to_dict(composer)
         system_prompt = (
-            "You write pure Python DSP code for a sandboxed music renderer. "
-            "Return Python code only, no markdown, no explanation. "
+            "You write pure Python DSP code for a sandboxed music renderer. Return Python code only, no markdown, no explanation. "
             "The code must define render(duration, sample_rate, loopable); small helper functions are allowed. "
             "render must return a one-dimensional numpy array of float audio samples in -1..1. "
             "Allowed imports: numpy as np, math, random. Do not read or write files. "
-            "Do not use os, sys, subprocess, pathlib, sockets, network, eval, exec, open, or __import__. "
-            "Do not use external samples or any music-generation API. "
-            "Use the selected technique guides as style grammar, not as fixed templates. Invent original notes, rhythms, timbres, and section choices for this exact brief. "
-            "If a selected guide describes Euclidean rhythm, Markov continuation, L-system phrases, FM, Karplus-Strong, band-limited waveforms, or Schroeder/Moorer reverb, implement a lightweight version directly with lists/numpy/math; do not import a music library. "
-            "Hard musical requirements: build from beat/bar timing derived from bpm; create drums or rhythmic texture, bass, chords/pad, and melody/lead/texture layers when stylistically appropriate; "
-            "use at least two motifs or motif transformations; include A/B, call-response, or phrase variation; vary register, rhythm, density, harmony, timbre, fill, or effect motion every 4 or 8 bars; "
-            "use at least one selected composition algorithm and one selected synthesis algorithm when those categories are present; "
-            "avoid repeating one short melody array unchanged for the whole duration; use envelopes and at least two of LFO/modulation, filter-like tone shaping, FM/additive/wavetable/subtractive synthesis, noise percussion, delay, or reverb. "
-            "For ambient, drums may be replaced by subtle pulse/noise motion, but the piece still needs evolving layers and melodic identity. "
+            "Do not use os, sys, subprocess, pathlib, sockets, network, eval, exec, open, __import__, external samples, or any music-generation API. "
+            "Use the provided composition_blueprint / structured_composer_plan as the composition source of truth. Do not invent a single short melody array inside render and loop it unchanged. "
+            "Implement the plan's section timeline, chord progression, call motif, response motif, B variation, bass pattern, drum steps, fills, and automation. "
+            "Hard musical requirements: derive beat/bar timing from bpm; create drums or rhythmic texture, bass, chords/pad, and melody/lead/texture layers when stylistically appropriate; "
+            "strong melody beats should use chord tones and weak beats may use passing notes; bass should leave room for kick and answer it; drums need accents and fills; "
+            "A/B phrases must be related but not identical; include a mini build/drop for short clips and clearer sections for longer clips; "
+            "use envelopes, sidechain-like ducking, filter or harmonic brightness motion, riser/downlifter or fill, delay/reverb, and soft saturation where appropriate. "
+            "For ambient, drums may be sparse or replaced by pulse/noise motion, but include evolving texture and melodic identity. "
+            "For 8bit/chiptune, use pingpong arpeggio, counter melody, and noise drums without harsh constant high notes. "
+            "For lofi, use swing, warm keys, vinyl/tape noise, and lowpass color. "
+            "For techno/acid/cyber, use Euclidean/percussive groove, acid/subtractive bass, filter automation, and sidechain. "
             "For loopable=True, make phrase lengths periodic, avoid one-shot intros/outros, and keep delay/reverb tails compatible with looping. "
             "Selected technique guides:\n"
             f"{_format_technique_guides(technique_guides)}"
@@ -2032,25 +2591,25 @@ class PyMusicPlugin(Star):
                 "musical_intent": brief.musical_intent,
                 "technique_references": brief.references,
                 "selected_technique_guides": [
-                    {"id": guide["id"], "category": guide.get("category"), "basis": guide.get("basis"), "summary": guide["summary"], "guide": guide["guide"]}
+                    {
+                        "id": guide["id"],
+                        "category": guide.get("category"),
+                        "basis": guide.get("basis"),
+                        "summary": guide["summary"],
+                        "guide": guide["guide"],
+                    }
                     for guide in technique_guides
                 ],
                 "music_spec": spec.__dict__,
-                "requirements": {
-                    "duration": spec.duration,
-                    "sample_rate_runtime_argument": True,
-                    "loopable": spec.loopable,
-                    "mono_float_array": True,
-                    "pure_python_numpy": True,
-                    "composition": [
-                        "original motifs, not a stock phrase",
-                        "section or phrase variation",
-                        "separate musical layers",
-                        "at least one selected composition algorithm when present",
-                        "at least one selected synthesis algorithm when present",
-                        "ADSR/envelopes plus modulation or effects",
-                    ],
-                },
+                "composition_blueprint": composer_data,
+                "structured_composer_plan": composer_data,
+                "implementation_notes": [
+                    "Use composition_blueprint.motifs.call / response / b_variation instead of ad hoc one-array melody loops.",
+                    "Use composition_blueprint.chords.progression to target chord tones on steps 0, 4, 8, 12.",
+                    "Use composition_blueprint.bass.pattern and drums.kick_steps together so kick and bass breathe.",
+                    "Use composition_blueprint.sections to change density, register, drum fill, timbre, and effects.",
+                    "Use numpy vector operations where easy; simple loops over musical events are OK.",
+                ],
             },
             ensure_ascii=False,
         )
@@ -2082,9 +2641,9 @@ duration = int(sys.argv[3])
 sample_rate = int(sys.argv[4])
 loopable = sys.argv[5] == "1"
 source = code_path.read_text(encoding="utf-8")
-
 allowed_modules = {"numpy": np, "math": math, "random": random}
 blocked_numpy_parts = {"ctypeslib", "lib", "testing", "distutils", "f2py"}
+
 
 def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
     root = name.split(".", 1)[0]
@@ -2098,6 +2657,7 @@ def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
     if root == "random":
         return random
     raise ImportError(f"import not allowed: {name}")
+
 
 safe_builtins = {
     "__import__": safe_import,
@@ -2118,6 +2678,10 @@ safe_builtins = {
     "tuple": tuple,
     "dict": dict,
     "set": set,
+    "sorted": sorted,
+    "reversed": reversed,
+    "all": all,
+    "any": any,
 }
 env = {"__builtins__": safe_builtins, "np": np, "math": math, "random": random}
 exec(compile(source, str(code_path), "exec"), env)
@@ -2146,37 +2710,50 @@ with wave.open(str(out_path), "wb") as wf:
         timeout = max(20, min(180, int(duration / 2) + 20))
         try:
             result = subprocess.run(
-                [sys.executable, "-c", runner, str(code_path), str(wav_path), str(duration), str(sample_rate), "1" if loopable else "0"],
+                [
+                    sys.executable,
+                    "-c",
+                    runner,
+                    str(code_path),
+                    str(wav_path),
+                    str(duration),
+                    str(sample_rate),
+                    "1" if loopable else "0",
+                ],
                 capture_output=True,
                 text=True,
                 timeout=timeout,
             )
             if result.returncode != 0:
-                detail = (result.stderr or result.stdout or "unknown AI renderer error").strip()[-800:]
+                detail = (result.stderr or result.stdout or "unknown AI renderer error").strip()[-1000:]
                 raise RuntimeError(detail)
         finally:
             code_path.unlink(missing_ok=True)
 
-    async def _build_plan(self, brief: PromptBrief, event: AstrMessageEvent, spec: MusicSpec) -> RenderPlan:
+    async def _build_plan(
+        self,
+        brief: PromptBrief,
+        event: AstrMessageEvent,
+        spec: MusicSpec,
+        composer: CompositionPlan | dict[str, Any],
+    ) -> RenderPlan:
         diversity_level = self._diversity_level()
-        fallback = _default_plan(spec, diversity_level)
+        fallback = _default_plan(spec, diversity_level, composer)
         provider = self._get_music_provider(event)
         if provider is None:
             return fallback
+        composer_data = _composer_to_dict(composer)
         system_prompt = (
-            "You convert a MusicSpec into one strict JSON object named RenderPlan for a fixed Python renderer. "
+            "You convert a MusicSpec and composition_blueprint into one strict JSON object named RenderPlan for a fixed Python renderer. "
             "Do not include markdown. Do not write Python. "
             "Fields: tracks array, drums object, bass object, chords object, melody object, texture object, effects object, master object. "
-            "Use only these renderer choices when possible. "
-            "tracks: objects with role melody/chords/bass/drums/texture, name chip_lead/warm_keys/pluck/pad/bell/acid_bass/sub_drone/warm_bass/lofi_drums/noise_texture, optional gain 0.1..1.5. "
+            "Stay renderer-friendly and preserve the CompositionPlan's theme/answer/B variation, sections, chord-tone targeting, bass-kick relation, and automation. "
+            "tracks: role melody/chords/bass/drums/texture, name chip_lead/warm_keys/pluck/pad/bell/acid_bass/sub_drone/warm_bass/lofi_drums/noise_texture, optional gain 0.1..1.5. "
             "drums.pattern: lofi_swing, 8bit_arpeggio_beat, ambient_no_drums, breakbeat, minimal_techno. "
             "bass.pattern: root_octave, warm_roots, acid_bass, sub_drone, syncopated_pulse. "
             "chords.progression: i-VI-III-VII, i-iv-V-i, I-V-vi-IV, ii-V-I, modal_drone; chords.voicing: soft/open/stabs/drone. "
             "melody.shape: arpeggio, call_response, pentatonic, stepwise, random_walk, motif_variation; melody.register: low/mid/high. "
-            "texture.noise: vinyl/tape/air/space/none. effects: delay/reverb/lowpass booleans. master.target_peak 0.3..0.98. "
-            "For diversity_level 0 choose stable conventional patterns; for 1 use balanced variation; for 2 choose bolder patterns, fills, and melody shapes. "
-            "Use technique references as stylistic hints while staying within renderer-friendly choices. "
-            "Keep values simple and renderer-friendly."
+            "texture.noise: vinyl/tape/air/space/none. effects: delay/reverb/lowpass/sidechain/riser booleans. master.target_peak 0.3..0.98."
         )
         try:
             technique_guides = _select_technique_guides(brief, spec, diversity_level)
@@ -2189,12 +2766,14 @@ with wave.open(str(out_path), "wb") as wf:
                     for guide in technique_guides
                 ],
                 "music_spec": spec.__dict__,
+                "composition_blueprint": composer_data,
+                "composer_plan": composer_data,
                 "diversity_level": diversity_level,
             }
             response = await self._provider_text_chat(provider, json.dumps(plan_input, ensure_ascii=False), system_prompt)
             data = _extract_json(getattr(response, "completion_text", "") or str(response))
             if data:
-                return _plan_from_dict(data, fallback)
+                return _plan_from_dict(data, fallback, composer_data)
         except Exception as exc:
             logger.warning(f"[pymusic] RenderPlan LLM planning failed, using fallback: {exc}")
         return fallback
@@ -2203,7 +2782,6 @@ with wave.open(str(out_path), "wb") as wf:
         mode = _normalize_send_mode(spec.send_mode, self._default_send_mode())
         if spec.duration > VOICE_MAX_SECONDS:
             mode = "file"
-
         if mode in {"voice", "auto"}:
             try:
                 await asyncio.wait_for(
@@ -2215,7 +2793,6 @@ with wave.open(str(out_path), "wb") as wf:
                 logger.warning(f"[pymusic] voice send failed: {exc}")
                 if mode == "voice":
                     raise
-
         await asyncio.wait_for(
             event.send(MessageChain([File(name=wav_path.name, file=str(wav_path))])),
             timeout=FILE_SEND_TIMEOUT_SECONDS,
@@ -2269,7 +2846,10 @@ with wave.open(str(out_path), "wb") as wf:
                 logger.warning(f"[pymusic] configured provider is unavailable or not chat-capable: {provider_id}")
             except Exception as exc:
                 logger.warning(f"[pymusic] failed to load configured provider {provider_id}: {exc}")
-        return self.context.get_using_provider(event.unified_msg_origin)
+        try:
+            return self.context.get_using_provider(event.unified_msg_origin)
+        except Exception:
+            return None
 
     async def _provider_text_chat(self, provider: Any, prompt: str, system_prompt: str) -> Any:
         return await asyncio.wait_for(

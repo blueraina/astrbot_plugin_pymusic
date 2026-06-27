@@ -4,53 +4,41 @@
     "description": "最大生成时长（秒）",
     "default": 600,
     "hint": "插件硬上限默认 600 秒；超过 60 秒会自动改为文件发送",
-    "slider": {
-      "min": 5,
-      "max": 600,
-      "step": 5
-    }
+    "slider": {"min": 5, "max": 600, "step": 5}
   },
   "default_duration_sec": {
     "type": "int",
     "description": "默认生成时长（秒）",
     "default": 20,
     "hint": "用户未指定时长时使用；建议 15 到 30 秒",
-    "slider": {
-      "min": 5,
-      "max": 60,
-      "step": 5
-    }
+    "slider": {"min": 5, "max": 60, "step": 5}
   },
   "music_provider_id": {
     "type": "string",
     "description": "音乐规划模型",
     "default": "",
     "_special": "select_provider",
-    "hint": "用于扩写提示词、生成 MusicSpec 和 AI Python 合成代码；留空则跟随当前会话默认模型"
+    "hint": "用于扩写提示词、生成 MusicSpec、结构化作曲计划和 AI Python 合成代码；留空则跟随当前会话默认模型"
   },
   "model_call_timeout_sec": {
     "type": "int",
     "description": "模型规划单步超时（秒）",
     "default": 12,
-    "hint": "PromptBrief / MusicSpec / RenderPlan 每一步模型调用的等待上限；插件不设上限，低于 1 秒会按 1 秒处理；Agent 工具外层可能仍有 60 秒总超时"
+    "hint": "PromptBrief / MusicSpec / RenderPlan / AI Python 每一步模型调用的等待上限；插件不设上限，低于 1 秒会按 1 秒处理；Agent 工具外层可能仍有 60 秒总超时"
   },
   "waveform_loopable": {
     "type": "bool",
     "description": "启用波形级无缝循环",
     "default": true,
     "obvious_hint": true,
-    "hint": "开启后会自动对齐小节、周期化乐句，并做首尾 crossfade；会稍微压短混响尾巴"
+    "hint": "开启后会自动对齐乐句思路、周期化段落，并做首尾 crossfade；会稍微压短混响尾巴"
   },
   "diversity_level": {
     "type": "int",
     "description": "多样性强度",
     "default": 1,
-    "hint": "0=稳定，1=均衡，2=大胆；越高越容易使用 B 段变化、过门和更跳脱的旋律/鼓组",
-    "slider": {
-      "min": 0,
-      "max": 2,
-      "step": 1
-    }
+    "hint": "0=稳定，1=均衡，2=大胆；越高越容易使用 B 段变化、过门、call-response 和更跳脱的旋律/鼓组",
+    "slider": {"min": 0, "max": 2, "step": 1}
   },
   "default_send_mode": {
     "type": "string",
@@ -63,11 +51,7 @@
     "description": "输出采样率",
     "default": 44100,
     "hint": "常用 22050 / 32000 / 44100；采样率越高文件越大",
-    "slider": {
-      "min": 16000,
-      "max": 48000,
-      "step": 1000
-    }
+    "slider": {"min": 16000, "max": 48000, "step": 1000}
   },
   "keep_history_wav": {
     "type": "bool",
