@@ -952,7 +952,7 @@ def _validate_generated_python(source: str) -> None:
     if len(source) > 32000:
         raise ValueError("generated Python code is too long")
     tree = ast.parse(source)
-    allowed_imports = {"numpy", "math", "random"}
+    allowed_imports = {"numpy", "math", "random", "musicpy"}
     blocked_names = {
         "open",
         "exec",
@@ -979,6 +979,10 @@ def _validate_generated_python(source: str) -> None:
     }
     blocked_attrs = {
         "save",
+        "write",
+        "read",
+        "export",
+        "play",
         "savez",
         "savez_compressed",
         "load",
@@ -2578,7 +2582,7 @@ def _event_plain_result(event: AstrMessageEvent, text: str) -> Any:
     "astrbot_plugin_pymusic",
     "Lenovo",
     "Generate structured pure-Python WAV electronic music from prompts and send it to QQ chats.",
-    "v0.4.5",
+    "v0.4.6",
     repo="https://github.com/blueraina/astrbot_plugin_pymusic",
 )
 class PyMusicPlugin(Star):
@@ -2842,10 +2846,10 @@ class PyMusicPlugin(Star):
             "You write pure Python DSP code for a sandboxed music renderer. Return Python code only, no markdown, no explanation. "
             "The code must define render(duration, sample_rate, loopable); small helper functions are allowed. "
             "render must return a one-dimensional numpy array of float audio samples in -1..1. "
-            "Allowed imports: numpy as np, math, random. Do not read or write files. "
+            "Allowed imports: numpy as np, math, random, musicpy as mp. Use musicpy for composition helpers only; do not use musicpy file export, playback, or DAW features. Do not read or write files. "
             "Never import, reference, or use the identifier name wave; the host plugin writes the returned audio array to a WAV file after render() finishes. "
             "Do not call wave.open or any file-writing API. Use variable names like audio, signal, osc, layer, or buffer instead of wave. "
-            "Do not use os, sys, subprocess, pathlib, sockets, network, eval, exec, open, __import__, external samples, or any music-generation API. "
+            "Do not use os, sys, subprocess, pathlib, sockets, network, eval, exec, open, __import__, external samples, or any network music-generation API. "
             "The sandbox provides safe_add(target,start,source,gain=1.0), safe_assign(target,start,source), safe_min_assign(target,start,source), and safe_multiply(target,start,source). "
             "Use these host-provided helpers for every partial array write: notes, drum hits, delay taps, reverb tails, sidechain envelopes, filter/automation segments, risers, downlifters, fills, and texture layers. "
             "Never do target[start:end] += source, target[start:end] = source, np.minimum(target[start:end], source), or target[start:end] *= source directly unless start/end are known to cover the full array. "
@@ -2934,9 +2938,9 @@ class PyMusicPlugin(Star):
         system_prompt = (
             "You repair sandboxed pure Python DSP renderer code. Return the complete corrected Python code only, no markdown, no explanation. "
             "The corrected code must define render(duration, sample_rate, loopable) and return a one-dimensional numpy float audio array in -1..1. "
-            "Allowed imports: numpy as np, math, random. Do not read or write files. "
+            "Allowed imports: numpy as np, math, random, musicpy as mp. Use musicpy for composition helpers only; do not use musicpy file export, playback, or DAW features. Do not read or write files. "
             "Never import, reference, or use the identifier name wave; the host plugin writes the returned array to WAV. "
-            "Do not use os, sys, subprocess, pathlib, sockets, network, eval, exec, open, __import__, external samples, or any music-generation API. "
+            "Do not use os, sys, subprocess, pathlib, sockets, network, eval, exec, open, __import__, external samples, or any network music-generation API. "
             "Fix the reported runtime error while preserving the musical intent and composition_blueprint. "
             "The sandbox provides safe_add(target,start,source,gain=1.0), safe_assign(target,start,source), safe_min_assign(target,start,source), and safe_multiply(target,start,source). "
             "Use these helpers for every partial write: notes, drum hits, delay taps, reverb tails, sidechain envelopes, automation/filter/gain segments, risers, downlifters, fills, and texture layers. "
@@ -2988,6 +2992,7 @@ import sys
 import wave
 from pathlib import Path
 
+import musicpy as mp
 import numpy as np
 
 code_path = Path(sys.argv[1])
@@ -2996,14 +3001,14 @@ duration = int(sys.argv[3])
 sample_rate = int(sys.argv[4])
 loopable = sys.argv[5] == "1"
 source = code_path.read_text(encoding="utf-8")
-allowed_modules = {"numpy": np, "math": math, "random": random}
-blocked_numpy_parts = {"ctypeslib", "lib", "testing", "distutils", "f2py"}
+allowed_modules = {"numpy": np, "math": math, "random": random, "musicpy": mp}
+blocked_module_parts = {"ctypeslib", "lib", "testing", "distutils", "f2py"}
 
 
 def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
     root = name.split(".", 1)[0]
     parts = set(name.split("."))
-    if level != 0 or root not in allowed_modules or parts & blocked_numpy_parts:
+    if level != 0 or root not in allowed_modules or parts & blocked_module_parts:
         raise ImportError(f"import not allowed: {name}")
     if root == "numpy":
         return __import__(name, globals, locals, fromlist, level)
@@ -3011,6 +3016,8 @@ def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
         return math
     if root == "random":
         return random
+    if root == "musicpy":
+        return mp
     raise ImportError(f"import not allowed: {name}")
 
 
